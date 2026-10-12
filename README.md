@@ -20,7 +20,7 @@ Install the whole plugin; the skills link to each other and are not meant to be 
 ### Claude Code
 
 ```bash
-claude plugin marketplace add <git-url-or-path-of-this-repo>
+claude plugin marketplace add Pechynho/pechynho-skills
 claude plugin install pechynho@pechynho-skills
 ```
 
@@ -31,7 +31,7 @@ Installs the skills and the subagents `pechynho:worker`, `pechynho:worker-light`
 ### Codex
 
 ```bash
-codex plugin marketplace add <git-url-or-path-of-this-repo>
+codex plugin marketplace add Pechynho/pechynho-skills
 codex plugin add pechynho@pechynho-skills
 ```
 
