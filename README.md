@@ -13,6 +13,8 @@ invoked with the `pechynho:` prefix: `/pechynho:planning` in Claude Code, `$pech
 | `feature-feedback` | Record of user feedback with stable IDs and status, targeted plan updates and implementation. |
 | `handoff` | Handover of work in progress to another agent via a temporary document and a prompt to copy. |
 
+Install the whole plugin; the skills link to each other and are not meant to be installed one by one.
+
 ## Install
 
 ### Claude Code

@@ -9,7 +9,7 @@ them), the dev URL, roles, test data ownership and the results format.
 
 - Use Playwright in headless mode only. Never open a visible browser window.
 - Write data only after the brief or your own check has confirmed the dev environment and its database.
-  Never touch beta, production or the automated-test database. Use the test mode of payments and
+  Never touch any non-dev environment (staging, beta, production) or the automated-test database. Use the test mode of payments and
   messages; never send a real payment or a message to a real recipient.
 - Write each repeatable scenario as a headless script in the work directory from the brief, named by
   its scenario ID, with compact output and the command that runs it.

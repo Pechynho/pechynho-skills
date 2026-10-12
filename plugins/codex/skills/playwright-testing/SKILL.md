@@ -70,7 +70,8 @@ neither replaces nor prevents this check. Pass this rule to the testers.
 Before the first write verify **the target URL and the actual database of the application** from
 non-sensitive environment or connection information. An account name or the look of a page is not
 proof of the dev environment. Creating, changing and deleting test data is allowed **exclusively in the
-dev DB**; beta, production and the automated-tests database are not targets of this skill. If the
+dev DB**; non-dev environments (staging, beta, production) and the automated-tests database are not
+targets of this skill. If the
 environment cannot be determined, writes wait.
 
 Load the project's [dev environment](shared/project-context.md#dev-environment) information: how to

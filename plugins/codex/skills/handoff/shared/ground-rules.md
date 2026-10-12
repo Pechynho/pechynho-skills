@@ -61,6 +61,11 @@ it says so explicitly.
   with different responsibilities need not become one abstraction; keep extraction within the task's
   scope.
 
+## Translations
+
+- When the project translates its UI, add every new translation key to all locales the project
+  supports right away; do not leave a key in one language for someone to fill in later.
+
 ## Browser cleanup
 
 - Always close the browsers you started (MCP sessions and own scripts) once the verification is done:

@@ -42,7 +42,7 @@ The plugin ships these subagents; launch them with the `Agent` tool by their nam
 |---|---|---|---|
 | `pechynho:worker` | stronger | all | implementation with tests, plan authoring, fixes needing judgment |
 | `pechynho:worker-light` | weaker | all | bounded work that meets the weaker-tier criteria above |
-| `pechynho:analyst` | stronger | read-only (no Edit/Write) | code reviewers, finding verifiers, plan validators, review synthesis, exploration |
+| `pechynho:analyst` | stronger | no Edit/Write; Bash stays for git and search, so "read-only" is also an instruction | code reviewers, finding verifiers, plan validators, review synthesis, exploration |
 | `pechynho:browser-tester` | stronger | all, including browser tools | click-through and visual testers of [playwright-testing](../../playwright-testing/SKILL.md) |
 
 If the plugin agents are not available (for example the skills were installed without the plugin),

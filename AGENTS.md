@@ -7,5 +7,7 @@
   `base/shared/project-context.md` (settings with defaults), never hard-coded paths or commands.
 - Put tool-specific text in `<!-- platform:claude|codex -->` blocks or in `overlays/`; keep the shared
   wording tool-neutral ("question tool", "subagent").
+- Skills link to their sibling skills (`../../programming/SKILL.md`), so they are meant to be
+  installed together as the plugin, not one by one.
 - One rule lives in one place. Skills link to `shared/…` instead of repeating it.
 - Bump `VERSION` for a release and validate with `claude plugin validate . --strict`.

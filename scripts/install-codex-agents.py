@@ -26,6 +26,8 @@ MODEL_RE = re.compile(r'^model = "([^"]+)"$', re.M)
 
 
 def newest(family: str) -> str | None:
+    # The catalog orders models by `priority` (lower is preferred) and Codex lists the newest
+    # generation first, so the lowest priority among the listed `*-<family>` slugs is the newest one.
     try:
         catalog = json.loads((HOME / "models_cache.json").read_text())
     except (OSError, ValueError):
@@ -49,7 +51,8 @@ def resolve(text: str) -> str:
 def main() -> None:
     uninstall = "--uninstall" in sys.argv
     dry_run = "--dry-run" in sys.argv
-    DEST.mkdir(parents=True, exist_ok=True)
+    if not uninstall and not dry_run:
+        DEST.mkdir(parents=True, exist_ok=True)
     for agent in sorted(SRC.glob("*.toml")):
         target = DEST / agent.name
         managed = target.is_file() and target.read_text().startswith(MARKER)
