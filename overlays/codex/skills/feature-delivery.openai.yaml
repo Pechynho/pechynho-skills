@@ -1,0 +1,7 @@
+interface:
+  display_name: "Feature delivery"
+  short_description: "Plan, implement, click-through and review a feature end to end"
+  default_prompt: "Use $pechynho:feature-delivery to deliver the first verified version of "
+
+policy:
+  allow_implicit_invocation: false

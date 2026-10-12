@@ -1,0 +1,4 @@
+interface:
+  display_name: "Playwright testing"
+  short_description: "Headless click-through and visual testing in dev"
+  default_prompt: "Use $pechynho:playwright-testing to click through "

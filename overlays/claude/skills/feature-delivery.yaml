@@ -1,0 +1,2 @@
+argument-hint: "<feature, or path to an existing plan>"
+disable-model-invocation: true

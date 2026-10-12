@@ -1,0 +1,15 @@
+{
+  "name": "pechynho",
+  "description": "Agent workflow skills: planning, programming with delegation, multi-perspective code review, headless Playwright testing, feature delivery, feedback tracking and handoff.",
+  "author": { "name": "Jan Pech" },
+  "keywords": ["planning", "code-review", "delegation", "subagents", "playwright", "workflow"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Pechynho workflow skills",
+    "shortDescription": "Plan, implement, test, review and hand over features",
+    "longDescription": "Planning with validated JSON tasklists, programming with tiered delegation, multi-perspective code review with independent verification, headless Playwright click-through, end-to-end feature delivery, feedback tracking and handoff.",
+    "developerName": "Jan Pech",
+    "category": "Coding",
+    "capabilities": ["Read", "Write"]
+  }
+}

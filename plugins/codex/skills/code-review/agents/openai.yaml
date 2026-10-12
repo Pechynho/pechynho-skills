@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code review"
+  short_description: "Multi-perspective review with independent verification"
+  default_prompt: "Use $pechynho:code-review to review the working tree and present the findings."

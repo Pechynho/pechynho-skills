@@ -1,0 +1,4 @@
+interface:
+  display_name: "Planning"
+  short_description: "Explore, decide with the user and write a validated plan"
+  default_prompt: "Use $pechynho:planning to design a plan for "

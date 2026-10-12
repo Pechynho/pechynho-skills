@@ -1,0 +1,15 @@
+{
+  "name": "pechynho-skills",
+  "description": "Pechynho agent workflow skills for Claude Code.",
+  "owner": {
+    "name": "Jan Pech",
+    "email": "pechy5454@seznam.cz"
+  },
+  "plugins": [
+    {
+      "name": "pechynho",
+      "source": "./plugins/claude",
+      "description": "Agent workflow skills: planning, programming, code review, Playwright testing, feature delivery, feedback and handoff."
+    }
+  ]
+}

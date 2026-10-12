@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature feedback"
+  short_description: "Record and resolve user feedback on a feature"
+  default_prompt: "Use $pechynho:feature-feedback to record and resolve this feedback: "

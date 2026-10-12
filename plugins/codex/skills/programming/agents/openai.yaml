@@ -1,0 +1,4 @@
+interface:
+  display_name: "Programming"
+  short_description: "Implement and verify a change with delegation"
+  default_prompt: "Use $pechynho:programming to implement "
