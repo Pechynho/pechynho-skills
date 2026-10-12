@@ -82,8 +82,9 @@ created by inconsistent fixtures as a product bug.
 
 Use recognizable test accounts and record the created data. Before a larger intervention back up per
 the project rules and record the restore. Store one-off scripts and results in the
-[work directory](shared/project-context.md#work-directory), for example `{work_dir}/playwright/{scope}/`. In a worktree respect the container limitations; preparation in the main workspace is
-coordinated by the main agent.
+[work directory](shared/project-context.md#work-directory), for example `{work_dir}/playwright/{scope}/`.
+For worktrees and shared services follow the resolved
+[dev environment](shared/project-context.md#dev-environment).
 
 With several testers separate the accounts or records for mutating scenarios. Prepare shared states first
 and then read them, or sequence the passes. Use separate browser contexts if the tool supports them;

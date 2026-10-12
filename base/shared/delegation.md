@@ -18,8 +18,8 @@ the tier, the tools and the sandbox per role, so pick the agent rather than a ba
 <!-- platform:codex -->
 | Tier | Model |
 |---|---|
-| Stronger | the SOL model, for example `gpt-6.1-sol` |
-| Weaker | the LUNA model, for example `gpt-6-luna` |
+| Stronger | the newest SOL model available, for example `gpt-6.1-sol` |
+| Weaker | the newest LUNA model available, for example `gpt-6-luna` |
 <!-- /platform -->
 
 Use the identifiers available in the current environment; do not invent names or versions. If the
@@ -58,8 +58,8 @@ If the plugin agents are not available (for example the skills were installed wi
 use the general-purpose subagent with the tier's model and state the role restrictions in the brief.
 <!-- /platform -->
 <!-- platform:codex -->
-The collection ships these custom agents (installed into `~/.codex/agents/` by the installer, see the
-repository README); spawn them by name.
+The collection ships these custom agents (installed into `~/.codex/agents/` by the installer, which
+resolves the newest SOL and LUNA models; see the repository README); spawn them by name.
 
 | Agent | Tier | Sandbox | Use for |
 |---|---|---|---|

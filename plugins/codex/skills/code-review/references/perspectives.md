@@ -45,9 +45,8 @@ version; do not present an uncertain claim as a violation of a standard.
 
 ## Abstractions and existing tools
 
-DRY is mainly about a single source of a rule. Similar code with different reasons to change need not
-belong in one abstraction. Propose a design pattern for a concrete problem; do not demand it just because
-it exists.
+Apply the shared [reuse and DRY rules](../shared/ground-rules.md#reuse-and-dry). Propose a design
+pattern for a concrete problem; do not demand it just because it exists.
 
 Look for a solution first in the project, then in the standard library, the framework and the already
 installed packages. Recommend a new dependency only with a benefit, compatibility and maintenance cost.

@@ -1,6 +1,17 @@
 {
   "name": "pechynho",
   "description": "Agent workflow skills: planning, programming with delegation, multi-perspective code review, headless Playwright testing, feature delivery, feedback tracking and handoff.",
-  "author": { "name": "Jan Pech", "email": "pechy5454@seznam.cz" },
-  "keywords": ["planning", "code-review", "delegation", "subagents", "playwright", "workflow"]
+  "author": {
+    "name": "Jan Pech",
+    "email": "pechy5454@seznam.cz"
+  },
+  "license": "MIT",
+  "keywords": [
+    "planning",
+    "code-review",
+    "delegation",
+    "subagents",
+    "playwright",
+    "workflow"
+  ]
 }

@@ -26,7 +26,7 @@ project already answers; ask only when a value is needed and neither gives a usa
 - plans_dir: docs/plans
 - work_dir: var/agent-work            # optional; default is outside the repository
 - checks: `make lint`, `make test`    # what must pass before work counts as done
-- dev_env: .ai/dev-data/README.md     # how to reach the dev app, test accounts, data preparation
+- dev_env: docs/dev-environment.md   # how to reach the dev app, test accounts, data preparation
 - handoff_prefix: myproject
 ```
 
@@ -65,7 +65,10 @@ state which commands you chose. If they still cannot be determined, ask once.
 
 `dev_env`: how to start and reach the dev application, the test accounts and roles, how to prepare
 data and how to verify that the target is the dev database. Without it, look for the information in the
-project instructions and the README. Never guess that an environment is dev: an account name or the
+project instructions and the README. For a worktree, determine whether services run from that checkout
+or a shared workspace and which revision they serve. Coordinate shared services and data preparation
+through the main agent; do not assume containers or a dependency on the main checkout.
+Never guess that an environment is dev: an account name or the
 look of a page is not proof. Without a verifiable dev environment, browser testing that writes data
 waits.
 
@@ -89,7 +92,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 <!-- platform:codex -->
 | Capability | Codex |
 |---|---|
-| question tool | the user-input tool when the current mode offers one; otherwise ask in the conversation and stop |
+| question tool | the user-input tool when the current mode offers one; otherwise ask in the conversation and pause only work that depends on the answer |
 | subagent | spawn a subagent; the custom agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | send input to the same agent thread, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
 | browser | Playwright MCP (headless) or own Playwright scripts |

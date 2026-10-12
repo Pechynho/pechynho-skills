@@ -53,6 +53,14 @@ it says so explicitly.
 - A subagent may write tests too; running them is controlled exclusively by the main agent per
   [Verification](#verification).
 
+## Reuse and DRY
+
+- Before copying code, configuration, templates or test setup, look for an existing shared solution
+  and consider extracting the repeated rule into one place.
+- Share code that represents the same rule and changes for the same reason. Similar-looking code
+  with different responsibilities need not become one abstraction; keep extraction within the task's
+  scope.
+
 ## Browser cleanup
 
 - Always close the browsers you started (MCP sessions and own scripts) once the verification is done:

@@ -11,8 +11,8 @@ the tier, the tools and the sandbox per role, so pick the agent rather than a ba
 
 | Tier | Model |
 |---|---|
-| Stronger | the SOL model, for example `gpt-6.1-sol` |
-| Weaker | the LUNA model, for example `gpt-6-luna` |
+| Stronger | the newest SOL model available, for example `gpt-6.1-sol` |
+| Weaker | the newest LUNA model available, for example `gpt-6-luna` |
 
 Use the identifiers available in the current environment; do not invent names or versions. If the
 requested variant is unavailable, choose a suitable available alternative and state the limitation.
@@ -36,8 +36,8 @@ requested variant is unavailable, choose a suitable available alternative and st
 
 ## Agents of this collection
 
-The collection ships these custom agents (installed into `~/.codex/agents/` by the installer, see the
-repository README); spawn them by name.
+The collection ships these custom agents (installed into `~/.codex/agents/` by the installer, which
+resolves the newest SOL and LUNA models; see the repository README); spawn them by name.
 
 | Agent | Tier | Sandbox | Use for |
 |---|---|---|---|

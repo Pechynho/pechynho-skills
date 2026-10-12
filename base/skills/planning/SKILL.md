@@ -1,6 +1,6 @@
 ---
 name: planning
-description: "Prepares a feature implementation plan in docs/plans: code exploration, brainstorming, PRD, technical design and a JSON tasklist, independently validated by other subagents. Business questions are decided by the user. Use on a request to design, elaborate or write down a plan."
+description: "Prepares a feature implementation plan in the project's configured plans directory: code exploration, brainstorming, PRD, technical design and a JSON tasklist, independently validated by other subagents. Business questions are decided by the user. Use on a request to design, elaborate or write down a plan."
 ---
 
 # Planning
