@@ -2,9 +2,9 @@
 
 ## One persistent progress
 
-Extend the existing `{plans_dir}/{feature}/progress.json` per the
-[planning format](../../planning/references/artifacts.md); do not create a competing state file.
-For the whole pass add a `delivery` object:
+Extend the existing `{plans_dir}/{feature}/progress.json` and `log.jsonl` per the
+[planning format](../../planning/references/artifacts.md#single-source-of-progress); do not create a
+competing state file. For the whole pass add a `delivery` object to `progress.json`:
 
 | Field | Content |
 |---|---|
@@ -12,29 +12,31 @@ For the whole pass add a `delivery` object:
 | `phase` | `planning`, `implementation`, `playwright`, `code_review`, `fixes` or `handoff`. |
 | `authorization` | The source of the whole-workflow assignment, the confirmed scope, limitations and separate consents (e.g. push). |
 | `git` | Branch, immutable `base_commit`, initial uncommitted changes and their ownership, last known HEAD, last checkpoint and push information. |
-| `findings` | Stable finding IDs, source of the check, affected tasks, status, fix and evidence of the follow-up verification. |
 | `environment` | Dev URL, identification of the verified environment and test data, changed temporary settings and cleanup. |
 | `feedback` | Optional path to `feedback.md` relative to the plan folder and the IDs of the FB currently handled; without a copy of their statuses. |
 
-Use the existing `checks`, `open_questions` and `handoff`; do not duplicate their content into `delivery`.
-For checks keep the command or scenario, date, actual result, verified revision and, where applicable,
-the hashes of uncommitted files. A change of the affected code may invalidate the evidence. Mark a
-finding as resolved only with the corresponding verification; link open questions by their IDs.
+Use the existing `open_questions` and `handoff`; do not duplicate their content into `delivery`.
+Checks, findings and checkpoints go into the log as `check`, `finding` and `checkpoint` records. For
+checks keep the command or scenario, the actual result, the verified revision and, where applicable,
+the hashes of uncommitted files. A change of the affected code may invalidate the evidence. Findings
+from the click-through and the review keep their stable IDs, `source`, affected tasks, fix and the
+evidence of the follow-up verification; record a finding as resolved only with that verification and
+link open questions by their IDs.
 
 User feedback and its resolution are kept by [feature-feedback](../../feature-feedback/SKILL.md) in
-`feedback.md`. Findings from checks stay in `findings`; when a feedback item relates to them, link them
+`feedback.md`. Findings from checks stay in the log; when a feedback item relates to them, link them
 by ID instead of creating a second record of the same finding. After new feedback update the affected
 tasks and the delivery phase; do not rewrite the history of old checks or the user's acceptance.
 
 `handoff` contains the concrete next step, the files and tasks in progress, uncommitted changes, the
 state of delegated work, blockages and the commands needed to resume. Only the main orchestrator writes
 the progress. Save changes by atomically replacing valid JSON so that an interruption does not leave
-half a file. For an older plan keep the IDs and history; add the needed fields without overwriting the
-real state.
+half a file; the [plan tool](../shared/plan-tool.md) does this. For an older plan keep the IDs and
+history; add the needed fields without overwriting the real state.
 
 The permanent summary of results must suffice without live agents and without the content of the
 [work directory](../shared/project-context.md#work-directory). Large logs and screenshots may stay in the working directory, but write their substantial
-conclusions into the progress; admit missing evidence on takeover. Do not store secrets, database dumps
+conclusions into the progress or the log; admit missing evidence on takeover. Do not store secrets, database dumps
 or sensitive test data in Git. The temporary planning notes are not the only handover document.
 
 ## When to save and commit
@@ -66,7 +68,8 @@ automatic compaction of a long conversation. The user decides whether to restart
 ## Resuming after an interruption
 
 1. Load the plan, decisions, progress, the existing `feedback.md` and the current Git state, including
-   new and uncommitted files. Check the FB in progress and their links to tasks.
+   new and uncommitted files. Start from `plan.py status` and `plan.py findings`; read older log
+   records only when a step needs their evidence. Check the FB in progress and their links to tasks.
 2. Compare the expected branch, base and checkpoint with reality. Keep foreign or unclear changes and
    clarify their ownership. Do not fill in assumed results of missing steps.
 3. Verify the state of tasks in progress from the files, not from the availability of former

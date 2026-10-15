@@ -18,13 +18,17 @@
 │   ├── 02-backend.json
 │   ├── 03-ui.json
 │   └── 04-testing-and-rollout.json
-└── progress.json
+├── progress.json
+└── log.jsonl
 ```
 
 The chapters are examples, not mandatory areas of every change. A small plan may have a single chapter
 and task file; do not create empty documents. Reorganize an existing plan only per the assignment.
 Paths inside JSON are relative to the plan folder, paths to source code to the project root; Markdown
 links are relative to the document that contains them.
+
+Read and change the tasklist, the progress and the log with the [plan tool](../shared/plan-tool.md)
+where it is available; it implements the rules below.
 
 With user feedback the folder may also contain `feedback.md` per
 [feature-feedback](../../feature-feedback/SKILL.md), linked from the README. It records the requests
@@ -98,30 +102,47 @@ concurrency is not `low` risk. The validators confirm the values and the validat
 
 ## Single source of progress
 
+The state of realization lives in two files: `progress.json` holds the current state needed to decide
+the next step, `log.jsonl` holds the history that justifies it. Keep `progress.json` small; anything
+that only accumulates goes into the log.
+
 `progress.json` contains:
 
 - `schema_version`, `feature`, `updated_at`;
 - `plan_status`: `draft`, `awaiting_decision`, `validating` or `ready`;
 - `implementation_status`: `not_started`, `in_progress`, `blocked` or `done`;
-- `tasks`: a map by task ID with `status`, `owner`, `blockers`, `evidence` and `updated_at`;
-- `open_questions`: IDs of open questions from `decisions.md` and the blocked tasks;
-- `validation`: validators, the scope/revision of their check, findings with stable IDs, their
-  resolution (`open`, `resolved`, `rejected`, `awaiting_decision`), reasons and results of the re-check;
-- `checks`: the checks actually performed, scope/revision, result and a link to the evidence;
-- `handoff`: the current context, work in progress and the next step.
+- `tasks`: a map by task ID with `status`, `owner`, `blockers` and `updated_at`;
+- `open_questions`: IDs of open questions from `decisions.md`;
+- `handoff`: the current context, work in progress and the next step;
+- in `feature-delivery` also `delivery` per the
+  [continuity rules](../../feature-delivery/references/continuity.md).
+
+`log.jsonl` is append-only, one JSON object per line, each with `at` (UTC timestamp) and `type`:
+
+| `type` | Required fields | Records |
+|---|---|---|
+| `task` | `id`, `status` | A status change with `from`, and `evidence` for `done` or `reason` for `cancelled`. |
+| `check` | `subject`, `result` | A check actually performed: the command or scenario, scope, `revision`, a link to the evidence. |
+| `finding` | `id`, `status` | A finding from validation, testing or review: `source`, `severity`, `summary`, affected `tasks`, `fix`, `evidence`. Status `open`, `resolved`, `rejected` or `awaiting_decision`. |
+| `validation` | `validators`, `result` | A validation pass: scope, revision and the tasks whose `complexity` and `risk` it confirmed (`confirmed_tasks`). |
+| `checkpoint` | `commit` | A checkpoint commit and the milestone it saves. |
+| `note` | `text` | Any other fact a later session needs, for example the reason of a decision about the work. |
+
+Never rewrite or delete log lines. A later `finding` record with the same `id` updates the earlier
+one field by field; the current state of a finding is the merge of its records in order. Do not
+copy log content back into `progress.json`.
 
 Task statuses: `pending`, `in_progress`, `blocked`, `done`, `cancelled`. When the plan is created, the
-tasks are `pending`, the owner `null`, the check results empty. When editing an existing plan, keep the
-real status and the evidenced history. Cancelling a task requires a reason and a check of the impact on
-its consumers and on the coverage of criteria; cancelled work is not finished work.
+tasks are `pending`, the owner `null` and the log empty. When editing an existing plan, keep the real
+status and the evidenced history. `done` needs evidence of the `done_when` conditions and the
+verification, finished subtasks and done dependencies. Cancelling a task requires a reason and a check
+of the impact on its consumers and on the coverage of criteria; cancelled work is not finished work.
 
 Do not store statuses in the tasklist as well, nor by hand in a `progress.md`. Derive counts and
 percentages from the items, without counting parents and subtasks twice. Generate any human-readable
 overview from the JSON. The main orchestrator updates the progress at a milestone, status change,
 blockage and handover of work; subagents supply the inputs and do not write concurrently into the
-shared file.
+progress or the log.
 
-In the whole `feature-delivery` workflow the same `progress.json` is extended with the delivery phase,
-the fixed review base, checkpoints and a resumable handover per the
-[continuity rules](../../feature-delivery/references/continuity.md). The status
-`implementation_status: done` does not mean a finished click-through/review or acceptance by the user.
+The status `implementation_status: done` does not mean a finished click-through/review or acceptance
+by the user.

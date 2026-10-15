@@ -89,7 +89,8 @@ Business questions go to the user and the answer is reflected in all affected pa
 have the fixed points and their links re-checked in a targeted way.
 
 The main agent verifies JSON parsing, links, uniqueness of IDs, existence of dependencies, absence of
-cycles and coverage of the acceptance criteria by tasks and verification. For pure planning do not run
+cycles and coverage of the acceptance criteria by tasks and verification, with `plan.py validate` of
+the [plan tool](shared/plan-tool.md) where available; it creates the progress with `plan.py init`. For pure planning do not run
 application tests, linters or builds. Do not mark the plan as ready while a necessary decision is
 missing, a blocking finding is unresolved or the required independent validation could not be performed.
 Record the limitations transparently.

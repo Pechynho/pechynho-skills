@@ -31,7 +31,7 @@ requested variant is unavailable, choose a suitable available alternative and st
   edits with an exact list of places, tests of behavior the assignment defines unambiguously, fixes of
   verified findings of low or medium severity and assembly of the JSON tasklist from a finished
   design. Within a plan, a task whose `complexity` and `risk`
-  are both `low` and confirmed by the validation record in `progress.json` meets this. Any other task,
+  are both `low` and confirmed by the validation record in the plan log meets this. Any other task,
   and any work without a plan, is judged by the main agent against the same criteria; in doubt it goes
   to the stronger tier.
 - **Stronger tier** for everything else: unclear or complex logic, interface and architecture design,

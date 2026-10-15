@@ -40,10 +40,11 @@ proposed solutions, the user's answers and the permitted fix scope. Check that t
 the current code. Do not implement refuted findings or open business assumptions; include optional
 improvements only when the assignment covers them. Do not ask again for consent already given.
 
-When implementing a plan from [planning](../planning/SKILL.md), load its `README.md`, PRD, decisions,
-relevant chapters, `tasks/index.json` and `progress.json`. Respect the dependencies and the stable task
-IDs. The main agent updates the progress at milestones, blockages and handover; do not duplicate the
-status into the tasklist. `done` requires the task's conditions including the relevant verification.
+When implementing a plan from [planning](../planning/SKILL.md), load its `README.md`, PRD, decisions
+and relevant chapters; take the state, the ready tasks and the task details from the
+[plan tool](shared/plan-tool.md) (`status`, `next`, `show`) instead of reading whole task files.
+Respect the dependencies and the stable task IDs. The main agent updates the progress at milestones,
+blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done` requires the task's conditions including the relevant verification.
 A newly discovered business ambiguity goes to the user and the answer back into the plan.
 
 ## 2. Choose how to work

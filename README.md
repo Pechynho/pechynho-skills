@@ -71,7 +71,7 @@ apply on top of them.
 ```text
 base/                       shared, tool-neutral source (edit here)
 ├── skills/<name>/          SKILL.md + references/
-├── shared/                 ground rules, project context, delegation, business questions
+├── shared/                 ground rules, project context, delegation, business questions, plan tool
 └── agents/                 subagent roles (body + name/description)
 overlays/
 ├── claude/                 plugin.json, extra SKILL.md frontmatter, agent frontmatter (model, tools)

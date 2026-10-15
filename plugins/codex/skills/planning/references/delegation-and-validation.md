@@ -46,8 +46,8 @@ They check in particular:
 7. Relevant migrations, compatibility, deployment, recovery, security and performance.
 8. The [task size](artifacts.md#task-size) and the justification of `complexity` and `risk`. The values
    select the implementer's model, so an unjustified `low` on a task touching permissions, billing,
-   limits, data lifecycle or concurrency is a finding. The confirmed values go into the validation
-   record of `progress.json`.
+   limits, data lifecycle or concurrency is a finding. The confirmed values go into the `validation`
+   record of the plan log.
 
 A finding contains an ID, severity/blocking impact, the place in the plan, an explanation and evidence
 from the assignment, code or rules, the affected criteria/tasks, the proposed fix and any question for
@@ -55,7 +55,8 @@ the user. Validators do not rewrite the design, do not implement and do not run 
 
 ## Incorporation and finishing
 
-The orchestrator merges duplicates, evaluates the findings and records their resolution in the progress.
+The orchestrator merges duplicates, evaluates the findings and records them and their resolution as
+`finding` records in the plan log.
 It incorporates justified technical fixes; a rejection is evidenced with a reason. Business questions
 go to the user via the question tool. Dependent parts wait for the answer, independent ones may continue.
 Reflect the answers in the PRD, decisions, chapters, tasks and the briefs of the affected agents.
