@@ -43,11 +43,29 @@ For example, you start the export at 10:00 and a new member joins at 10:01. Shou
 
 This is only a pattern for a question, not a project decision about exports.
 
+## When to ask
+
+Asking with the question tool usually stops all work until the user replies, so an open question must
+not idle the rest of the work. In implementation, fixes and testing (not in planning, whose purpose is
+to ask) proceed like this:
+
+1. Record the question with its ID, the options and the dependent part, and keep working.
+2. Do everything the answer does not change: the independent tasks, and in the dependent part also its
+   decision-independent pieces (structure, shared code, tests of the behavior already determined).
+   Keep the open point behind one clearly marked place so the answer touches as little as possible.
+   Do not implement a guessed variant as if it were decided.
+3. Ask all collected questions in one batch only when no meaningful independent work remains, or at the
+   end of the phase before its final checks.
+4. After the answer finish the dependent parts in the same phase, then run the checks they affect.
+
+Ask immediately only when the answer determines most of the remaining work, when continuing would
+create work that the likely answer throws away, or when the user asked to be consulted right away.
+
 ## Waiting and the answer
 
 - Give the question an ID and mark the findings and fixes that depend on it.
-- In asynchronous mode continue with independent work and wait for a real answer. Timeout, a default
-  choice and the Recommended mark are not consent.
+- While a question is open, continue with independent work per [when to ask](#when-to-ask) and wait for
+  a real answer. Timeout, a default choice and the Recommended mark are not consent.
 - Keep a dependent finding as a question or "undecidable". Do not write the dependent fix and do not
   mark that part of the review as closed. An interim synthesis with open points may be presented
   before the answer.

@@ -29,7 +29,8 @@ workflow is not consent to install it.
 **Never invent business behavior.** It comes from the user or from already confirmed decisions. Raise
 new rules, conflicts and scope extensions per the
 [business questions procedure](shared/business-questions.md); dependent work
-waits for a real answer, independent work continues. Make technical choices yourself only within the
+waits for a real answer, independent work continues, and outside planning the questions are batched per
+its [when to ask](shared/business-questions.md#when-to-ask) rule. Make technical choices yourself only within the
 confirmed behavior.
 
 ## 1. Takeover or resume
@@ -72,6 +73,10 @@ without reason. For a later standalone fix respect its scope and the original pe
 Use [programming](../programming/SKILL.md), proceeding in coherent parts by task dependencies. Pass
 the confirmed contracts, rules, file ownership and completion conditions including tests. Programming
 decides the size of delegation and the models; the orchestrator need not write all the code itself.
+
+Business questions that arise here do not stop the phase: implement all of the work the answers do
+not change, then ask the collected questions together and finish the dependent parts before moving on
+to the click-through. Leave a part unfinished only when the user postpones its decision.
 
 The main agent integrates the results and runs the checks per the ground rules, grouped at the
 end of a larger part and of the whole implementation; record skipped or failed checks explicitly.

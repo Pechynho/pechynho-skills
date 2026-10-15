@@ -26,8 +26,10 @@ assignment or from rules and decisions already confirmed; existing code, a test 
 not by itself replace a user decision. A choice that changes access, billing, limits, data lifecycle or
 the outcome of a user scenario is a business decision even when it shows up as an implementation
 detail. Raise such questions per the
-[business questions procedure](shared/business-questions.md); dependent
-implementation waits for the answer, independent work continues. Do not ask decided questions again.
+[business questions procedure](shared/business-questions.md): collect them, implement everything
+the answer does not change first and ask in one batch per its
+[when to ask](shared/business-questions.md#when-to-ask) rule; only the dependent remainder waits and is
+finished after the answer. Do not ask decided questions again.
 Make technical choices yourself within the confirmed behavior.
 
 When taking over a code review, load the synthesis, finding IDs, evidence, the reviewed revision, the
