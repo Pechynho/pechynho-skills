@@ -15,6 +15,10 @@ stricter wins; a project rule that relaxes one of these rules applies only when 
   decisions in English and keep only product terms that have no English equivalent.
 - Write only the comments that explain hard-to-understand parts of the code or a deliberate,
   non-obvious choice.
+- Keep the code, its comments, tests and names free of references to workflow documents: no task,
+  question, decision, finding or feedback IDs (`T-001`, `Q-002`, `D-003`, `R3-01`, `FB-001`) and no
+  paths to plans, reviews or handoffs. These documents may not be in the repository and may be
+  deleted; write the reason itself into the comment instead.
 
 ## Git and package installation
 
