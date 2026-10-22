@@ -60,6 +60,8 @@ The skills are project-agnostic. A project can tune them in its `AGENTS.md` / `C
 - checks: `make lint`, `make test`
 - dev_env: docs/dev-environment.md     # dev URL, test accounts, data preparation, how to verify the dev DB
 - handoff_prefix: myproject
+- parallel_runs: 6                    # subagent runs at the same time
+- max_parallel_browsers: 2            # headless browsers at the same time
 ```
 
 Every value has a default; see [project context](base/shared/project-context.md). The universal
