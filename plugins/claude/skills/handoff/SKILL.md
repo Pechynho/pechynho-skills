@@ -62,8 +62,9 @@ The document should contain the following; shorten or omit unimportant parts:
 - **Files and Git:** relevant paths with a short explanation, staged/unstaged/untracked state and known
   foreign changes. Use absolute paths or define the root of relative paths explicitly; do not refer only
   to the chat history or internal tool IDs.
-- **Plan and rules:** paths to the existing plan and tasklist, relevant materials and the entry file of
-  the project instructions (`AGENTS.md`, `CLAUDE.md`). Do not copy the project rules; the new agent loads them itself.
+- **Plan and rules:** paths to the existing plan and tasklist, approved mockups (also those kept only
+  in the work directory), relevant materials and the entry file of the project instructions
+  (`AGENTS.md`, `CLAUDE.md`). Do not copy the project rules; the new agent loads them itself.
 - **Verification:** checks actually performed, commands, results, limitations and subsequent changes.
   State clearly what was not run or finished.
 - **Obstacles and hypotheses:** open questions, evidenced bugs, failed attempts and their results, so

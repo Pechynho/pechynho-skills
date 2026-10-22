@@ -42,9 +42,8 @@ and their resolution with stable FB IDs; the status of implementation tasks stil
 - **README.md:** a short goal and scope, an overview of stages and links to the PRD, decisions, all
   chapters, the JSON index, the progress and any mockups. Do not duplicate the status and task counts
   by hand.
-- **mockups/*.html:** only when the user asked for mockups per
-  [planning](../SKILL.md#5-offer-mockups-of-a-visual-result); static illustrations of the PRD, not a
-  specification. Where the PRD and a mockup differ, the PRD holds.
+- **mockups/*.html:** only the mockups the user approved per the
+  [mockups procedure](../shared/mockups.md); they bind the look of the implementation.
 - **prd.md (Product Requirements Document):** for whom, why and what we build; scenarios, business
   rules, included and postponed scope, errors and exceptions, constraints and measurable or observable
   acceptance criteria with stable IDs `AC-001`. For rules state the source of the user decision.
@@ -72,7 +71,7 @@ Each task or subtask has a globally unique stable ID, for example `T-001` and `T
 | `id`, `title` | Identity and a short name of the result. |
 | `parent_id` | ID of the parent task, or `null`; subtasks are separate items. |
 | `outcome` | The unambiguous required result and the boundary of the work. |
-| `references` | Paths to chapters, optionally with a Markdown anchor. |
+| `references` | Paths to chapters, optionally with a Markdown anchor, and to approved mockups. |
 | `acceptance_criteria` | IDs of the PRD criteria the task contributes to. |
 | `depends_on` | IDs of tasks whose completion is required before the start. |
 | `code_areas` | Verified existing and explicitly marked proposed paths/modules. |

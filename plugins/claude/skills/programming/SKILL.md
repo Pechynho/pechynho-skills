@@ -42,11 +42,20 @@ the current code. Do not implement refuted findings or open business assumptions
 improvements only when the assignment covers them. Do not ask again for consent already given.
 
 When implementing a plan from [planning](../planning/SKILL.md), load its `README.md`, PRD, decisions
-and relevant chapters; take the state, the ready tasks and the task details from the
-[plan tool](shared/plan-tool.md) (`status`, `next`, `show`) instead of reading whole task files.
+and relevant chapters, and the approved mockups of the screens you build, which bind the look per the
+[mockups procedure](shared/mockups.md#an-approved-mockup-binds-the-look); take the state, the ready
+tasks and the task details from the [plan tool](shared/plan-tool.md) (`status`, `next`, `show`)
+instead of reading whole task files.
 Respect the dependencies and the stable task IDs. The main agent updates the progress at milestones,
 blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done` requires the task's conditions including the relevant verification.
 A newly discovered business ambiguity goes to the user and the answer back into the plan.
+
+At the start, find the large visual steps of the work that the plan does not already settle by an
+approved mockup or a recorded refusal, for example a new admin dashboard or an e-mail template, and ask in one batch whether to make mockups before them per
+the [mockups procedure](shared/mockups.md). This is the ask-immediately case of
+[when to ask](shared/business-questions.md#when-to-ask): the answer decides how those steps are built.
+Build the look of such a step only after its mockup is approved; meanwhile implement what the look does
+not affect.
 
 ## 2. Choose how to work
 

@@ -76,6 +76,9 @@ be finished. Feedback by itself does not authorize push, deploy or installation.
   decisions, chapters and tasks, keeping IDs and history. Limit the validation per planning to the
   changed parts and their links; do not rewrite the valid rest. Start the dependent implementation
   only after the needed decisions and the validation of the plan change.
+- Visual feedback on a screen with an approved mockup: a departure from the mockup is a fix; a request
+  to change the approved look updates the mockup and needs its new approval per the
+  [mockups procedure](shared/mockups.md#an-approved-mockup-binds-the-look).
 
 Reopen the affected finished tasks in the progress when they no longer meet their conditions; add new
 tasks per planning for new work. Keep past verifications, stating what invalidated them. Leave
