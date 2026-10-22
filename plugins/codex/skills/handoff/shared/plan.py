@@ -6,14 +6,17 @@ Usage:
     plan.py PLAN_DIR validate                  check the tasklist, the progress and the log
     plan.py PLAN_DIR status                    derived overview of the plan
     plan.py PLAN_DIR next                      tasks ready to start (and parents ready to integrate)
-    plan.py PLAN_DIR show ID                   one task with its status, dependencies and log
-    plan.py PLAN_DIR set ID STATUS [options]   change a task status; logs the change with its evidence
+    plan.py PLAN_DIR show ID [ID ...]          tasks with their status, dependencies and log
+    plan.py PLAN_DIR set ID [ID ...] STATUS [options]
+                                               change task statuses; logs each change with its evidence
     plan.py PLAN_DIR log TYPE key=value ...    append a record (check, finding, validation_plan, validation,
                                                checkpoint, note)
     plan.py PLAN_DIR findings [--all]          current state of findings, unresolved by default
     plan.py PLAN_DIR validations [--pass P | --open]
                                                cells of a validation pass, the last by default, or the cells
                                                not covered in all passes
+    plan.py PLAN_DIR batch FILE|-              several set and log commands from a file or stdin, all or
+                                               nothing (see shared/tool-batches.md)
 
 The format is described in planning/references/artifacts.md. Python 3.8+, standard library only.
 Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong usage.
@@ -22,9 +25,12 @@ Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -54,6 +60,7 @@ PROGRESS_KEYS = {
     "open_questions", "handoff", "delivery",
 }
 MOCKUP_STATUSES = ("proposed", "approved")
+BATCH_COMMANDS = ("set", "log")
 AC_RE = re.compile(r"\bAC-\d+\b")
 DECISION_RE = re.compile(r"\bD-\d+\b")
 
@@ -109,6 +116,25 @@ class Plan:
         for tid, task in self.tasks.items():
             if task.get("parent_id"):
                 self.children.setdefault(task["parent_id"], []).append(tid)
+        self._tx: dict | None = None
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """Keep the changes in memory and write them together at the end, or nothing on an exception;
+        reads inside see them."""
+        if self._tx is not None:
+            yield
+            return
+        self._tx = tx = {"progress": None, "log": []}
+        try:
+            yield
+        finally:
+            self._tx = None
+        if tx["progress"] is not None:
+            write_json(self.progress_path, tx["progress"])
+        if tx["log"]:
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in tx["log"])
 
     @property
     def progress_path(self) -> Path:
@@ -119,11 +145,20 @@ class Plan:
         return self.root / "log.jsonl"
 
     def progress(self) -> dict:
+        if self._tx is not None and self._tx["progress"] is not None:
+            return json.loads(json.dumps(self._tx["progress"]))
         return read_json(self.progress_path)
 
+    def save_progress(self, progress: dict) -> None:
+        if self._tx is not None:
+            self._tx["progress"] = progress
+        else:
+            write_json(self.progress_path, progress)
+
     def log(self) -> list[dict]:
+        pending = list(self._tx["log"]) if self._tx is not None else []
         if not self.log_path.exists():
-            return []
+            return pending
         records = []
         for n, line in enumerate(self.log_path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
@@ -132,9 +167,12 @@ class Plan:
                 records.append(json.loads(line))
             except json.JSONDecodeError as e:
                 raise Refused(f"{self.log_path}:{n}: invalid JSON: {e}")
-        return records
+        return records + pending
 
     def append_log(self, record: dict) -> None:
+        if self._tx is not None:
+            self._tx["log"].append(record)
+            return
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -593,19 +631,28 @@ def cmd_next(plan: Plan, args) -> None:
 
 
 def cmd_show(plan: Plan, args) -> None:
-    task = plan.get(args.id)
+    for tid in args.ids:
+        plan.get(tid)
+    for n, tid in enumerate(dict.fromkeys(args.ids)):
+        if n:
+            print()
+        show_task(plan, tid)
+
+
+def show_task(plan: Plan, tid: str) -> None:
+    task = plan.get(tid)
     progress = plan.progress()
-    entry = progress.get("tasks", {}).get(args.id, {"status": "pending"})
-    print(f"# {args.id} ({plan.task_file[args.id]})")
+    entry = progress.get("tasks", {}).get(tid, {"status": "pending"})
+    print(f"# {tid} ({plan.task_file[tid]})")
     print(json.dumps(task, indent=2, ensure_ascii=False))
     print(f"\nstatus: {json.dumps(entry, ensure_ascii=False)}")
-    for label, ids in (("depends on", task.get("depends_on", [])), ("subtasks", plan.children.get(args.id, []))):
+    for label, ids in (("depends on", task.get("depends_on", [])), ("subtasks", plan.children.get(tid, []))):
         if ids:
             print(f"{label}: " + ", ".join(f"{d} ({plan.status_of(progress, d)})" for d in ids))
-    consumers = [t for t, v in plan.tasks.items() if args.id in v.get("depends_on", [])]
+    consumers = [t for t, v in plan.tasks.items() if tid in v.get("depends_on", [])]
     if consumers:
         print("needed by: " + ", ".join(consumers))
-    touches = lambda r: args.id == r.get("id") or args.id in as_list(r.get("tasks"))  # noqa: E731
+    touches = lambda r: tid == r.get("id") or tid in as_list(r.get("tasks"))  # noqa: E731
     history = [r for r in plan.log() if r.get("type") != "finding" and touches(r)]
     history += [f for f in findings(plan) if touches(f)]
     if history:
@@ -619,24 +666,35 @@ def as_list(value) -> list:
 
 
 def cmd_set(plan: Plan, args) -> None:
-    task = plan.get(args.id)
+    if args.status == "done" and not args.evidence:
+        raise Refused("done needs --evidence: the met done_when conditions and the verification")
+    if args.status == "cancelled" and not args.reason:
+        raise Refused("cancelled needs --reason, after checking the consumers and the criteria coverage")
+    ids = list(dict.fromkeys(args.ids))
+    # In the given order, each against the progress the previous ones changed; all or nothing.
+    with plan.transaction():
+        for tid in ids:
+            try:
+                set_status(plan, args, tid)
+            except Refused as e:
+                raise Refused(f"{tid}: {e}" if len(ids) > 1 else str(e)) from None
+
+
+def set_status(plan: Plan, args, tid: str) -> None:
+    task = plan.get(tid)
     progress = plan.progress()
     status = args.status
     if status == "done":
-        if not args.evidence:
-            raise Refused("done needs --evidence: the met done_when conditions and the verification")
-        open_children = [c for c in plan.children.get(args.id, []) if plan.status_of(progress, c) not in CLOSED]
+        open_children = [c for c in plan.children.get(tid, []) if plan.status_of(progress, c) not in CLOSED]
         if open_children:
             raise Refused(f"subtasks not finished: {', '.join(open_children)}")
         open_deps = [d for d in task.get("depends_on", []) if plan.status_of(progress, d) != "done"]
         if open_deps:
             raise Refused(f"dependencies not done: {', '.join(open_deps)}")
-    if status == "cancelled" and not args.reason:
-        raise Refused("cancelled needs --reason, after checking the consumers and the criteria coverage")
-    if status == "blocked" and not args.blocker and not progress.get("tasks", {}).get(args.id, {}).get("blockers"):
+    if status == "blocked" and not args.blocker and not progress.get("tasks", {}).get(tid, {}).get("blockers"):
         raise Refused("blocked needs --blocker")
 
-    entry = progress.setdefault("tasks", {}).setdefault(args.id, {"status": "pending", "owner": None, "blockers": []})
+    entry = progress.setdefault("tasks", {}).setdefault(tid, {"status": "pending", "owner": None, "blockers": []})
     previous = entry.get("status", "pending")
     entry["status"] = status
     if args.owner is not None:
@@ -650,17 +708,17 @@ def cmd_set(plan: Plan, args) -> None:
     progress["updated_at"] = stamp
     if status == "in_progress" and progress.get("implementation_status") == "not_started":
         progress["implementation_status"] = "in_progress"
-    write_json(plan.progress_path, progress)
+    plan.save_progress(progress)
 
-    record = {"at": stamp, "type": "task", "id": args.id, "status": status, "from": previous}
+    record = {"at": stamp, "type": "task", "id": tid, "status": status, "from": previous}
     for key in ("evidence", "reason"):
         if getattr(args, key):
             record[key] = getattr(args, key)
     if args.blocker:
         record["blockers"] = args.blocker
     plan.append_log(record)
-    print(f"{args.id}: {previous} -> {status}")
-    consumers = [t for t, v in plan.tasks.items() if args.id in v.get("depends_on", [])]
+    print(f"{tid}: {previous} -> {status}")
+    consumers = [t for t, v in plan.tasks.items() if tid in v.get("depends_on", [])]
     if status == "cancelled" and consumers:
         print(f"warning: {', '.join(consumers)} depend on this task; update their depends_on via planning")
 
@@ -754,6 +812,65 @@ def cmd_validations(plan: Plan, args) -> None:
     print(f"to brief: {', '.join(brief) or '-'}")
 
 
+def batch_lines(source: str) -> list[tuple[int, list[str]]]:
+    """The commands of a batch with their line numbers: shell-like arguments or a JSON array of strings."""
+    if source == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except OSError as e:
+            raise Refused(f"cannot read {source}: {e.strerror or e}")
+    commands = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            if line.startswith("["):
+                tokens = json.loads(line)
+                if not isinstance(tokens, list) or not all(isinstance(x, str) for x in tokens):
+                    raise ValueError("expected a JSON array of strings")
+            else:
+                tokens = shlex.split(line)
+        except ValueError as e:
+            raise Refused(f"line {n}: {e}")
+        commands.append((n, tokens))
+    return commands
+
+
+def parse_line(parser: argparse.ArgumentParser, folder: Path, n: int, tokens: list[str]):
+    """One batch line parsed like a command line; wrong usage becomes a refusal naming the line."""
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            return parser.parse_args([str(folder), *tokens])
+    except SystemExit:
+        lines = out.getvalue().strip().splitlines()
+        raise Refused(f"line {n}: wrong usage: {lines[-1].split('error: ', 1)[-1] if lines else 'see --help'}")
+
+
+def cmd_batch(plan: Plan, args, parser: argparse.ArgumentParser, commands: dict) -> None:
+    out = io.StringIO()
+    try:
+        lines = batch_lines(args.source)
+        with plan.transaction():
+            for n, tokens in lines:
+                line_args = parse_line(parser, args.plan_dir, n, tokens)
+                if line_args.command not in BATCH_COMMANDS:
+                    raise Refused(f"line {n}: {line_args.command} is not allowed in a batch "
+                                  f"(allowed: {', '.join(BATCH_COMMANDS)})")
+                try:
+                    with contextlib.redirect_stdout(out):
+                        commands[line_args.command](plan, line_args)
+                except Refused as e:
+                    raise Refused(f"line {n}: {e}") from None
+    except Refused as e:
+        raise Refused(f"{e}; nothing was written") from None
+    print(out.getvalue(), end="")
+    print(f"batch: {len(lines)} command{'' if len(lines) == 1 else 's'} applied")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("plan_dir", type=Path)
@@ -763,9 +880,9 @@ def main() -> None:
     sub.add_parser("status")
     sub.add_parser("next")
     p = sub.add_parser("show")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID", help="one or more tasks")
     p = sub.add_parser("set")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID", help="one or more tasks, changed in this order")
     p.add_argument("status", choices=TASK_STATUSES)
     p.add_argument("--owner", help="who works on it; an empty value clears it")
     p.add_argument("--blocker", action="append", help="a blocker, e.g. Q-003; repeatable")
@@ -780,6 +897,8 @@ def main() -> None:
     group = p.add_mutually_exclusive_group()
     group.add_argument("--pass", dest="pass_id", help="the pass to show; the last one by default")
     group.add_argument("--open", action="store_true", help="the cells not covered in all passes")
+    p = sub.add_parser("batch")
+    p.add_argument("source", metavar="FILE|-", help="a file with one command per line, or - for stdin")
     args = parser.parse_args()
 
     if not (args.plan_dir / "tasks" / "index.json").exists():
@@ -790,7 +909,12 @@ def main() -> None:
         "validations": cmd_validations,
     }
     try:
-        commands[args.command](Plan(args.plan_dir), args)
+        plan = Plan(args.plan_dir)
+        if args.command == "batch":
+            cmd_batch(plan, args, parser, commands)
+        else:
+            with plan.transaction():
+                commands[args.command](plan, args)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         raise SystemExit(1)

@@ -15,7 +15,7 @@ For each ID state the actual result:
 - **Unverified:** a part not performed and the reason; a tool or time limitation is not a successful result.
 - **Flaky:** passes and fails from the same state; the conditions observed.
 
-`status` of the tool gives the overview, `result ID` the evidence of one run. A script whose data cannot
+`status` of the tool gives the overview, `result ID …` the evidence of the last runs. A script whose data cannot
 be restored in its `prepare` names the preparation step in the handover. Record the roles, languages and
 look modes actually used; the tool records the URL, code state, browser and viewports. When the code
 changed during the work, `status` lists the results from another code state; say which of them were not

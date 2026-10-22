@@ -6,8 +6,11 @@ helpers (parse_diff, classify, pack, common_dir, location_file) are imported dir
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -590,7 +593,7 @@ class TriageTest(ReviewTestCase):
             if chunk["kind"] == "logic":
                 self.ok("cell", cid, "G1")
             else:
-                self.ok("omit", cid, "G1", "--reason", "not logic")
+                self.ok("omit", cid, "--groups", "G1", "--reason", "not logic")
         out = self.ok("estimate")
         self.assertIn("full: 3 chunks, 4 files, 12 changed lines", out)
         self.assertIn("light: 6 chunks, 7 files, 15 changed lines", out)
@@ -687,12 +690,12 @@ class ChunkGroupCellTest(ReviewTestCase):
         self.ok("group", "G2", "--perspectives", "Performance")
         self.refused("cell", "C99", "G1", contains="unknown chunk C99")
         self.refused("cell", "C01", "G9", contains="unknown group G9")
-        self.refused("omit", "C99", "G1", "--reason", "r", contains="unknown chunk")
+        self.refused("omit", "C99", "--groups", "G1", "--reason", "r", contains="unknown chunk")
 
         self.ok("cell", "C01", "G1", "G2")
         self.assertEqual(self.state()["cells"]["C01/G1"],
                          {"status": "pending", "owner": None, "wave": None, "unchecked": []})
-        self.ok("omit", "C01", "G2", "--reason", "no hot paths")
+        self.ok("omit", "C01", "--groups", "G2", "--reason", "no hot paths")
         self.assertEqual(self.state()["cells"]["C01/G2"], {"status": "omitted", "reason": "no hot paths"})
         # cell turns an omission back into a pending cell
         self.ok("cell", "C01", "G2")
@@ -703,7 +706,7 @@ class ChunkGroupCellTest(ReviewTestCase):
         self.ok("set", "C01/G1", "covered")
         self.ok("cell", "C01", "G1")
         self.assertEqual(self.state()["cells"]["C01/G1"]["status"], "covered")
-        self.refused("omit", "C01", "G1", "--reason", "r", contains="already covered")
+        self.refused("omit", "C01", "--groups", "G1", "--reason", "r", contains="already covered")
 
 
 # --- waves: approve, next, start, set -------------------------------------------------------------
@@ -955,7 +958,7 @@ class CoverageTest(ReviewTestCase):
         self.ok("group", "G1", "--perspectives", "Security")
         self.ok("group", "G2", "--perspectives", "Performance")
         self.ok("cell", "C01", "G1")
-        self.ok("omit", "C01", "G2", "--reason", "no loops")
+        self.ok("omit", "C01", "--groups", "G2", "--reason", "no loops")
         out = self.ok("coverage")
         self.assertIn("open C01/G1 (pending)", out)
         self.assertIn("omitted C01/G2: no loops", out)
@@ -1253,7 +1256,7 @@ class GitRefreshTest(ReviewTestCase):
         self.ok("chunk", "C03", "--title", "links", "--integration")
         self.ok("cell", "C01", "G1", "G2")
         self.ok("cell", "C02", "G1")
-        self.ok("omit", "C02", "G2", "--reason", "no input handling")
+        self.ok("omit", "C02", "--groups", "G2", "--reason", "no input handling")
         self.ok("cell", "C03", "G1")
         self.ok("start", "--owner", "R1", "C01/G1", "C01/G2", "C02/G1")
         self.ok("set", "C01/G1", "covered")
@@ -1331,7 +1334,7 @@ class GitRefreshTest(ReviewTestCase):
         self.assertExit(result, 1)
         self.assertIn("chunk C04: no cells", result.stdout)
         self.ok("cell", "C04", "G1")
-        self.ok("omit", "C04", "G2", "--reason", "no input handling")
+        self.ok("omit", "C04", "--groups", "G2", "--reason", "no input handling")
         out = self.ok("validate")
         self.assertIn("finding F5: stale after a refresh", out)
         # partial follow-ups come first in the next wave; integration waits for them
@@ -1350,6 +1353,490 @@ class GitRefreshTest(ReviewTestCase):
         self.ok("start", "--owner", "R1", "C02/G1")
         fresh = self.write_diff(modified("a.py", ["a"], ["b"]) + added("n.py", ["x"]), "diff.new.patch")
         self.refused("refresh", str(fresh), contains="C02/G1")
+
+
+
+# --- patterns, several IDs, skipped files, batch, audit and impact ----------------------------------
+
+
+class PatternTest(unittest.TestCase):
+    FILES = ["a.py", "src/a.py", "src/x/b.py", "src/x/c.twig", "templates/p/a.html.twig", "templates/q.html.twig"]
+
+    def match(self, pattern: str) -> list[str]:
+        regex = review.glob_regex(pattern)
+        return [f for f in self.FILES if regex.fullmatch(f)]
+
+    def test_glob_semantics(self):
+        cases = {
+            "*.py": ["a.py"],  # * stays within a directory
+            "src/*.py": ["src/a.py"],
+            "src/**": ["src/a.py", "src/x/b.py", "src/x/c.twig"],
+            "**/*.py": ["a.py", "src/a.py", "src/x/b.py"],  # **/ also matches no directory
+            "templates/**/*.html.twig": ["templates/p/a.html.twig", "templates/q.html.twig"],
+            "src/x/": ["src/x/b.py", "src/x/c.twig"],  # a trailing / is the whole directory
+            "src/?/b.py": ["src/x/b.py"],
+            "src/[!y]/*.twig": ["src/x/c.twig"],
+            "./a.py": ["a.py"],
+            "a.html.twig": [],  # dots are literal
+        }
+        for pattern, expected in cases.items():
+            with self.subTest(pattern):
+                self.assertEqual(self.match(pattern), expected)
+
+    def test_expand(self):
+        self.assertEqual(review.expand(["src/x/", "src/x/b.py", "sec. Foo::bar"], self.FILES, "u"),
+                         ["src/x/b.py", "src/x/c.twig", "sec. Foo::bar"])
+        with self.assertRaisesRegex(review.Refused, "tempaltes/\\*\\* matches no file of u"):
+            review.expand(["tempaltes/**"], self.FILES, "u")
+        with self.assertRaisesRegex(review.Refused, "x.py is not a file of u"):
+            review.expand(["x.py"], self.FILES, "u", literal="require")
+
+    def test_a_file_name_with_brackets_is_itself(self):
+        files = ["app/[id]/page.tsx", "app/a/page.tsx"]
+        self.assertEqual(review.expand(["app/[id]/page.tsx"], files, "u", literal="require"), ["app/[id]/page.tsx"])
+        self.assertEqual(review.expand(["./app/[id]/page.tsx"], files, "u"), ["app/[id]/page.tsx"])
+        # without an exact file of that name it stays a pattern, as in git
+        self.assertEqual(review.expand(["app/[ai]/page.tsx"], files, "u"), ["app/a/page.tsx"])
+
+    def test_whole_file_diff_parses_back(self):
+        path = Path(tempfile.mkdtemp()) / "d.patch"
+        self.addCleanup(lambda: path.unlink())
+        path.write_text(review.whole_file_diff("a.py", b"one\ntwo\n") + review.whole_file_diff("b.py", b"x")
+                        + review.whole_file_diff("e.txt", b"") + review.whole_file_diff("i.png", b"\x89P\0"))
+        files = review.parse_diff(path)
+        self.assertEqual({p: (f["status"], f["added"], f["binary"]) for p, f in files.items()},
+                         {"a.py": ("added", 2, False), "b.py": ("added", 1, False), "e.txt": ("added", 0, False),
+                          "i.png": ("added", 0, True)})
+
+
+TWO_CHUNKS = (modified("src/a.php", ["a"], ["b"]) + added("templates/a.html.twig", ["x"])
+              + added("templates/b.html.twig", ["y"]) + modified("lib/c.php", ["c"], ["d"]))
+
+
+class SeveralIdsTest(ReviewTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_plain(TWO_CHUNKS)
+        self.ok("group", "G1", "--perspectives", "Correctness and regressions")
+        self.ok("group", "G2", "--perspectives", "UX and accessibility")
+        self.ok("chunk", "C01", "--title", "pay", "--files", "src/", "templates/**/*.html.twig")
+        self.ok("chunk", "C02", "--title", "lib", "--files", "lib/*.php")
+        self.ok("cell", "C01", "G1", "G2")
+        self.ok("cell", "C02", "G1")
+
+    def test_chunk_files_take_patterns(self):
+        chunks = self.state()["chunks"]
+        self.assertEqual(chunks["C01"]["files"], ["src/a.php", "templates/a.html.twig", "templates/b.html.twig"])
+        self.assertEqual(chunks["C02"]["files"], ["lib/c.php"])
+        self.refused("chunk", "C03", "--title", "t", "--files", "nowhere/**", contains="matches no file of diff.patch")
+        self.refused("chunk", "C04", "--files", "lib/c.php", contains="needs --title")
+        self.ok("chunk", "C02", "--risk", "high")  # an existing chunk keeps its title
+        self.assertEqual(self.state()["chunks"]["C02"]["title"], "lib")
+
+    def test_omit_several_chunks_and_groups(self):
+        self.ok("cell", "C02", "G2")
+        out = self.ok("omit", "C01", "C02", "--groups", "G2", "--reason", "no UI")
+        self.assertIn("C01/G2: omitted", out)
+        self.assertEqual([r["id"] for r in self.log() if r.get("status") == "omitted"], ["C01/G2", "C02/G2"])
+        self.refused("omit", "C01", "--groups", "G9", "--reason", "r", contains="unknown group G9")
+
+    def test_set_several_cells_with_skipped_files(self):
+        self.ok("start", "--owner", "R1", "C01/G1", "C01/G2")
+        out = self.ok("set", "C01/G1", "C01/G2", "covered", "--skipped", "templates/**=no logic of this group")
+        self.assertIn("C01/G1: running -> covered, 2 files skipped", out)
+        cells = self.state()["cells"]
+        expected = {"templates/a.html.twig": "no logic of this group", "templates/b.html.twig": "no logic of this group"}
+        self.assertEqual(cells["C01/G1"]["skipped"], expected)
+        self.assertEqual(cells["C01/G2"]["skipped"], expected)
+        records = [r for r in self.log() if r.get("status") == "covered"]
+        self.assertEqual([(r["id"], r["skipped"]) for r in records], [("C01/G1", expected), ("C01/G2", expected)])
+        self.assertIn("skipped C01/G1 (2 files, no logic of this group): templates/a.html.twig, templates/b.html.twig",
+                      self.ok("coverage"))
+        self.assertIn("ok:", self.ok("validate"))
+
+    def test_skipped_needs_files_of_the_chunk_and_a_reason(self):
+        self.ok("start", "--owner", "R1", "C01/G1", "C02/G1")
+        before = (self.dir / "review.json").read_bytes(), (self.dir / "log.jsonl").read_bytes()
+        self.refused("set", "C01/G1", "covered", "--skipped", "lib/c.php=r", contains="C01/G1: lib/c.php is not a file")
+        self.refused("set", "C01/G1", "covered", "--skipped", "templates/**", contains="PATTERN=REASON")
+        self.refused("set", "C01/G1", "pending", "--skipped", "templates/**=r", contains="covered or partial")
+        # several cells are all or nothing: C02 has no templates, so C01 is not changed either
+        self.refused("set", "C01/G1", "C02/G1", "covered", "--skipped", "templates/**=r",
+                     contains="C02/G1: templates/** matches no file of chunk C02/G1")
+        self.refused("set", "C01/G1", "partial", "--unchecked", "templates/a.html.twig",
+                     "--skipped", "templates/**=r", contains="both skipped and unchecked")
+        self.assertEqual(((self.dir / "review.json").read_bytes(), (self.dir / "log.jsonl").read_bytes()), before)
+
+    def test_unchecked_patterns_and_sections(self):
+        self.ok("start", "--owner", "R1", "C01/G1")
+        self.ok("set", "C01/G1", "partial", "--unchecked", "templates/b*", "PaymentService::refund")
+        self.assertEqual(self.state()["cells"]["C01/G1"]["unchecked"], ["templates/b.html.twig", "PaymentService::refund"])
+
+    def test_follow_up_keeps_earlier_skips(self):
+        self.ok("start", "--owner", "R1", "C01/G1")
+        self.ok("set", "C01/G1", "partial", "--unchecked", "src/a.php", "--skipped", "templates/**=no logic")
+        self.ok("start", "--owner", "R2", "C01/G1")
+        self.ok("set", "C01/G1", "covered")
+        self.assertEqual(len(self.state()["cells"]["C01/G1"]["skipped"]), 2)
+        self.ok("set", "C01/G1", "pending")  # a lost run is judged again from scratch
+        self.assertNotIn("skipped", self.state()["cells"]["C01/G1"])
+
+    def test_verify_and_resolve_several_findings(self):
+        self.ok("start", "--owner", "R1", "C01/G1")
+        for fid in ("R1-01", "R1-02", "R1-03"):
+            self.add_finding(fid, "--cell", "C01/G1", "--kind", "bug", "--severity", "low", "--title", "t")
+        out = self.ok("verify", "R1-01", "R1-02", "confirmed", "--verifier", "V1")
+        self.assertIn("R1-01: confirmed", out)
+        self.assertIn("R1-02: confirmed", out)
+        self.assertEqual([r["id"] for r in self.log() if r["type"] == "verification"], ["R1-01", "R1-02"])
+        before = (self.dir / "review.json").read_bytes()
+        self.refused("verify", "R1-03", "R9-99", "refuted", "--verifier", "V1", contains="unknown finding R9-99")
+        self.assertEqual((self.dir / "review.json").read_bytes(), before)
+        self.ok("resolve", "R1-02", "R1-03", "duplicate", "--reason", "same cause", "--duplicate-of", "R1-01")
+        findings = self.state()["findings"]
+        self.assertEqual([findings[f]["status"] for f in ("R1-02", "R1-03")], ["duplicate", "duplicate"])
+        self.refused("resolve", "R1-01", "duplicate", "--reason", "r", "--duplicate-of", "R1-01", contains="itself")
+
+    def test_finding_location_patterns_expand_with_a_warning(self):
+        self.ok("start", "--owner", "R1", "C01/G1")
+        out = self.add_finding("R1-01", "--cell", "C01/G1", "--kind", "question", "--title", "t", "--files", "templates/*")
+        self.assertIn("warning: a finding's location names concrete files", out)
+        self.assertEqual(self.state()["findings"]["R1-01"]["files"], ["templates/a.html.twig", "templates/b.html.twig"])
+
+    def test_refresh_drops_the_skip_of_a_changed_file(self):
+        self.ok("start", "--owner", "R1", "C01/G1")
+        self.ok("set", "C01/G1", "covered", "--skipped", "templates/**=no logic")
+        fresh = (modified("src/a.php", ["a"], ["b"]) + added("templates/a.html.twig", ["x", "{{ x|raw }}"])
+                 + added("templates/b.html.twig", ["y"]) + modified("lib/c.php", ["c"], ["d"]))
+        self.ok("refresh", self.write_diff(fresh, "diff.new.patch"))
+        cell = self.state()["cells"]["C01/G1"]
+        self.assertEqual(cell["status"], "partial")
+        self.assertEqual(cell["unchecked"], ["templates/a.html.twig"])
+        self.assertEqual(cell["skipped"], {"templates/b.html.twig": "no logic"})
+
+
+class BatchTest(ReviewTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_single(TWO_CHUNKS)
+        self.ok("start", "--owner", "R1", "C01/G1", "C01/G2")
+        for fid in ("R1-01", "R1-02"):
+            self.write_finding(fid)
+
+    def batch(self, text: str):
+        return run_tool(REVIEW, self.dir, "batch", "-", cwd=self.tmp, env=self.env, input=text)
+
+    def snapshot(self):
+        return (self.dir / "review.json").read_bytes(), (self.dir / "log.jsonl").read_bytes()
+
+    def test_batch_applies_both_line_forms(self):
+        result = self.batch(
+            "# reviewer R1\n\n"
+            'finding R1-01 --cell C01/G1 --kind bug --severity high --title "Refund ignores the currency" --files src/a.php:3\n'
+            '["finding", "R1-02", "--cell", "C01/G1", "--kind", "question", "--title", "Is a \\"partial\\" refund allowed?"]\n'
+            "set C01/G1 C01/G2 covered --skipped 'templates/**=no logic of this group'\n"
+            "verify R1-01 confirmed --verifier V1\n"
+        )
+        self.assertOk(result)
+        self.assertIn("batch: 4 commands applied", result.stdout)
+        s = self.state()
+        self.assertEqual(s["findings"]["R1-02"]["title"], 'Is a "partial" refund allowed?')
+        self.assertEqual(s["findings"]["R1-01"]["status"], "confirmed")
+        self.assertEqual(s["cells"]["C01/G2"]["status"], "covered")
+        added_records = self.log()[-5:]
+        self.assertEqual([(r["type"], r.get("id")) for r in added_records],
+                         [("finding", "R1-01"), ("finding", "R1-02"), ("cell", "C01/G1"), ("cell", "C01/G2"),
+                          ("verification", "R1-01")])
+
+    def test_a_refused_line_writes_nothing(self):
+        before = self.snapshot()
+        result = self.batch("finding R1-01 --cell C01/G1 --kind question --title t\n"
+                            "verify R1-01 confirmed --verifier R1\n")
+        self.assertExit(result, 1)
+        self.assertIn("line 2: R1 reported R1-01", result.stderr)
+        self.assertIn("nothing was written", result.stderr)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_wrong_usage_and_disallowed_commands(self):
+        before = self.snapshot()
+        for text, message in (("set C01/G1 done\n", "line 1: argument status: invalid choice"),
+                              ("finding R1-01 --cell C01/G1 --kind question --title t\nstatus\n",
+                               "line 2: status is not allowed in a batch"),
+                              ("refresh x.patch\n", "line 1: refresh is not allowed"),
+                              ("batch -\n", "line 1: batch is not allowed"),
+                              ('["set", 1]\n', "line 1: a JSON line must be an array of strings"),
+                              ("set 'C01/G1 covered\n", "line 1: No closing quotation")):
+            with self.subTest(text):
+                result = self.batch(text)
+                self.assertExit(result, 1)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_batch_from_a_file(self):
+        path = self.tmp / "cmds.txt"
+        path.write_text("set C01/G1 covered\nset C01/G2 partial --unchecked src/a.php\n")
+        self.assertIn("batch: 2 commands applied", self.ok("batch", path))
+        self.assertEqual(self.state()["cells"]["C01/G2"]["unchecked"], ["src/a.php"])
+
+
+class AuditTest(ReviewTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = GitRepo(self.tmp / "repo", self.env)
+        self.repo.commit({"src/Payment/Pay.php": "<?php\npay();\n", "src/Payment/Refund.php": "<?php\nrefund();\n",
+                          "src/Other.php": "<?php\n", "templates/payment/form.html.twig": "{{ form }}\n",
+                          ".gitignore": "var/\n"}, "base")
+
+    def test_audit_of_the_head_reviews_whole_files(self):
+        self.repo.write({"src/Payment/Pay.php": "<?php\nchanged();\n"})  # not committed: not in a head audit
+        out = self.ok("init", "--scope", "payments", "--audit", "src/Payment/**", "templates/payment/",
+                      "--single", "--groups", "G1=Security and privacy", cwd=self.repo.root)
+        self.assertIn("audit: 3 whole files", out)
+        diff = (self.dir / "diff.patch").read_text()
+        self.assertIn("+pay();", diff)
+        self.assertNotIn("changed();", diff)
+        s = self.state()
+        self.assertEqual(s["chunks"]["C01"]["files"], ["src/Payment/Pay.php", "src/Payment/Refund.php",
+                                                       "templates/payment/form.html.twig"])
+        self.assertEqual(s["chunks"]["C01"]["lines"], 5)
+        self.assertEqual(s["revision"]["audit"], ["src/Payment/**", "templates/payment/"])
+        self.assertIsNone(s["revision"]["base"])
+        self.assertIn("audit of src/Payment/** templates/payment/ at HEAD", self.ok("status", cwd=self.repo.root))
+        self.assertIn("ok:", self.ok("validate"))
+
+    def test_audit_of_the_working_tree_and_its_refresh(self):
+        self.repo.write({"src/Payment/New.php": "<?php\nnew_();\n", "src/Payment/var/x.php": "ignored\n"})
+        self.repo.write({".gitignore": "var/\n"})
+        self.ok("init", "--scope", "payments", "--audit", "src/Payment/", "--working-tree", "--single",
+                "--groups", "G1=Correctness and regressions", cwd=self.repo.root)
+        self.assertEqual(self.state()["chunks"]["C01"]["files"],
+                         ["src/Payment/New.php", "src/Payment/Pay.php", "src/Payment/Refund.php"])
+        self.ok("start", "--owner", "R1", "C01/G1")
+        self.ok("set", "C01/G1", "covered")
+        self.repo.write({"src/Payment/Refund.php": "<?php\nrefund(2);\n", "src/Payment/Pay.php": None,
+                         "src/Payment/Fee.php": "<?php\n"})
+        self.assertIn("whole files written", self.ok("audit-diff", self.dir / "diff.new.patch", cwd=self.repo.root))
+        out = self.ok("refresh", self.dir / "diff.new.patch", cwd=self.repo.root)
+        self.assertIn("changed 1, added 1, removed 1 files", out)
+        cell = self.state()["cells"]["C01/G1"]
+        self.assertEqual(cell["status"], "partial")
+        self.assertEqual(cell["unchecked"], ["src/Payment/Fee.php", "src/Payment/Refund.php"])
+
+    def test_audit_usage(self):
+        self.assertExit(self.rv("init", "--scope", "s", cwd=self.repo.root), 2)
+        self.assertExit(self.rv("init", "--scope", "s", "--base", "main", "--audit", "src/", cwd=self.repo.root), 2)
+        self.refused_in_repo("init", "--scope", "s", "--audit", "src/Paymnet/**", contains="matches no file")
+        self.refused_in_repo("init", "--scope", "s", "--audit", "src/Nope.php", contains="is not a file")
+
+    def test_audit_diff_needs_an_audit(self):
+        self.write_diff(modified("x.py", ["a"], ["b"]))
+        self.ok("init", "--scope", "s", "--base", "main", "--head", "HEAD", cwd=self.repo.root)
+        self.refused_in_repo("audit-diff", self.dir / "x.patch", contains="not an audit")
+
+    def refused_in_repo(self, *args, contains: str):
+        result = self.rv(*args, cwd=self.repo.root)
+        self.assertExit(result, 1)
+        self.assertIn(contains, result.stderr)
+
+
+class ImpactTest(ReviewTestCase):
+    """The core of a cell is its chunk; the impact outside it is the reviewer's judgment."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = GitRepo(self.tmp / "repo", self.env)
+        self.repo.commit({"src/Pay.php": "a\n", "src/Use1.php": "u\n", "src/Use2.php": "u\n", "lib/Use3.php": "u\n"},
+                         "base")
+        self.repo.git("tag", "base")
+        self.repo.commit({"src/Pay.php": "b\n"}, "head")
+        self.write_diff(self.repo.diff("base", "HEAD"))
+        self.ok("init", "--scope", "s", "--base", "base", "--single", "--groups", "G1=Correctness and regressions",
+                cwd=self.repo.root)
+
+    def run_ok(self, *args) -> str:
+        return self.ok(*args, cwd=self.repo.root)
+
+    def run_refused(self, *args, contains: str) -> None:
+        result = self.rv(*args, cwd=self.repo.root)
+        self.assertExit(result, 1)
+        self.assertIn(contains, result.stderr)
+
+    def test_the_impact_is_recorded_without_changing_the_coverage(self):
+        self.run_ok("start", "--owner", "R1", "C01/G1")
+        out = self.run_ok("set", "C01/G1", "covered", "--impact", "src/Use*.php", "--impact-unchecked", "lib/")
+        self.assertIn("covered, 2 impact files checked, 1 impact files not checked", out)
+        cell = self.state()["cells"]["C01/G1"]
+        self.assertEqual(cell["status"], "covered")
+        self.assertEqual(cell["impact"], ["src/Use1.php", "src/Use2.php"])
+        self.assertEqual(cell["impact_unchecked"], ["lib/Use3.php"])
+        self.assertEqual(self.log()[-1]["impact"], ["src/Use1.php", "src/Use2.php"])
+        out = self.run_ok("coverage")
+        self.assertIn("impact not checked C01/G1 (a limitation, not a gap): lib/Use3.php", out)
+        self.assertIn("coverage complete", out)
+
+    def test_unchecked_is_the_core_only_and_the_impact_adds_up(self):
+        self.run_ok("start", "--owner", "R1", "C01/G1")
+        self.run_refused("set", "C01/G1", "partial", "--unchecked", "lib/*.php", contains="matches no file of chunk")
+        self.run_ok("set", "C01/G1", "partial", "--unchecked", "src/Pay.php", "--impact-unchecked", "src/Use1.php")
+        self.run_ok("start", "--owner", "R2", "C01/G1")
+        self.run_ok("set", "C01/G1", "covered", "--impact", "src/Use1.php")
+        cell = self.state()["cells"]["C01/G1"]
+        self.assertEqual(cell["impact"], ["src/Use1.php"])
+        self.assertNotIn("impact_unchecked", cell)  # checked later, so no longer open
+        self.run_refused("set", "C01/G1", "pending", "--impact", "src/Use1.php", contains="covered or partial")
+        self.run_refused("set", "C01/G1", "covered", "--impact", "src/Pay.php", contains="its own files are not its impact")
+        self.run_ok("set", "C01/G1", "pending")
+        self.assertNotIn("impact", self.state()["cells"]["C01/G1"])
+
+    def test_the_repository_is_listed_once_and_only_for_the_impact(self):
+        from tests import helpers
+
+        self.run_ok("status")
+        tool = helpers._tools[REVIEW]  # the module run_tool runs in this process
+        calls = []
+        original = tool.repo_files
+
+        def counting(*args):
+            calls.append(args)
+            return original(*args)
+
+        tool.repo_files = counting
+        self.addCleanup(setattr, tool, "repo_files", original)
+        self.run_ok("group", "G2", "--perspectives", "Security")
+        self.run_ok("cell", "C01", "G2")
+        self.run_ok("start", "--owner", "R1", "C01/G1", "C01/G2")
+        self.run_ok("set", "C01/G1", "partial", "--unchecked", "src/Pay.php")
+        self.assertEqual(calls, [])
+        path = self.tmp / "cmds.txt"
+        path.write_text("set C01/G1 partial --unchecked src/Pay.php --impact src/Use1.php\n"
+                        "set C01/G2 covered --impact src/Use2.php --impact-unchecked lib/Use3.php\n")
+        self.run_ok("batch", path)
+        self.assertEqual(len(calls), 1)
+
+    def test_overview(self):
+        out = self.run_ok("overview")
+        self.assertIn("C01  [medium/full]     1 files  whole diff  (src)", out)
+
+
+
+class ActorTest(ReviewTestCase):
+    """Reviewers and verifiers record their own results with --as, limited to their cells and findings."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_single(TWO_CHUNKS)
+        self.ok("start", "--owner", "R1", "C01/G1")
+        self.ok("start", "--owner", "R2", "C01/G2")
+
+    def as_(self, actor: str, *args, input: str | None = None):
+        return run_tool(REVIEW, self.dir, "--as", actor, *args, cwd=self.tmp, env=self.env, input=input)
+
+    def snapshot(self):
+        return (self.dir / "review.json").read_bytes(), (self.dir / "log.jsonl").read_bytes()
+
+    def test_a_reviewer_records_its_findings_and_coverage(self):
+        body = "# R1-01 Refund ignores the currency\n\n- **Scenario:** a refund in EUR\n"
+        lines = [json.dumps(["finding", "R1-01", "--cell", "C01/G1", "--kind", "bug", "--severity", "high",
+                             "--title", "Refund ignores the currency", "--files", "src/a.php", "--body", body]),
+                 "set C01/G1 covered --skipped 'templates/**=no logic'"]
+        result = self.as_("R1", "batch", "-", input="\n".join(lines) + "\n")
+        self.assertOk(result)
+        self.assertEqual((self.dir / "findings" / "R1-01.md").read_text(), body)
+        s = self.state()
+        self.assertEqual(s["findings"]["R1-01"]["reviewer"], "R1")
+        self.assertEqual(s["cells"]["C01/G1"]["status"], "covered")
+        self.assertEqual([r.get("by") for r in self.log()[-2:]], ["R1", "R1"])
+
+    def test_a_reviewer_is_limited_to_its_own_cells(self):
+        before = self.snapshot()
+        for args, message in (
+                (["set", "C01/G2", "covered"], "C01/G2 is not running for R1"),
+                (["set", "C01/G1", "pending"], "pending is the orchestrator's decision"),
+                (["finding", "R1-01", "--cell", "C01/G2", "--kind", "question", "--title", "t", "--body", "x"],
+                 "C01/G2 is not running for R1"),
+                (["finding", "R1-01", "--cell", "C01/G1", "--kind", "question", "--title", "t", "--body", "x",
+                  "--reviewer", "R2"], "only its own findings"),
+                (["start", "--owner", "R1", "C01/G2"], "start is the orchestrator's"),
+                (["resolve", "X", "refuted", "--reason", "r"], "resolve is the orchestrator's"),
+                (["chunk", "C01", "--risk", "low"], "chunk is the orchestrator's")):
+            with self.subTest(args[0]):
+                result = self.as_("R1", *args)
+                self.assertExit(result, 1)
+                self.assertIn(message, result.stderr)
+        result = self.as_("R1", "batch", "-", input="--as R2 set C01/G2 covered\n")
+        self.assertExit(result, 1)
+        self.assertIn("--as is given once for the whole batch", result.stderr)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.dir / "findings" / "R1-01.md").exists())
+
+    def test_a_refused_batch_writes_no_finding_file(self):
+        result = self.as_("R1", "batch", "-", input=(
+            "finding R1-01 --cell C01/G1 --kind question --title t --body 'Is it allowed?'\n"
+            "set C01/G2 covered\n"))
+        self.assertExit(result, 1)
+        self.assertFalse((self.dir / "findings" / "R1-01.md").exists())
+        self.assertNotIn("R1-01", self.state()["findings"])
+
+    def test_body_from_stdin_and_stable_files(self):
+        self.assertOk(self.as_("R1", "finding", "R1-01", "--cell", "C01/G1", "--kind", "question", "--title", "t",
+                               "--body", "-", input="# R1-01\nfrom stdin"))
+        self.assertEqual((self.dir / "findings" / "R1-01.md").read_text(), "# R1-01\nfrom stdin\n")
+        self.write_finding("R1-02")
+        result = self.as_("R1", "finding", "R1-02", "--cell", "C01/G1", "--kind", "question", "--title", "t",
+                          "--body", "again")
+        self.assertExit(result, 1)
+        self.assertIn("findings/R1-02.md already exists", result.stderr)
+        result = self.as_("R1", "finding", "R1-03", "--cell", "C01/G1", "--kind", "question", "--title", "t",
+                          "--body", "  ")
+        self.assertIn("--body is empty", result.stderr)
+
+    def test_a_verifier_records_its_verdicts_with_the_evidence(self):
+        self.assertOk(self.as_("R1", "finding", "R1-01", "--cell", "C01/G1", "--kind", "bug", "--severity", "low",
+                               "--title", "t", "--body", "# R1-01\n"))
+        self.assertOk(self.as_("V1", "verify", "R1-01", "confirmed", "--note", "Traced Refund::run, line 12."))
+        self.assertEqual((self.dir / "findings" / "R1-01.md").read_text(),
+                         "# R1-01\n\n## Verification by V1: confirmed\n\nTraced Refund::run, line 12.\n")
+        f = self.state()["findings"]["R1-01"]
+        self.assertEqual((f["status"], f["verifications"][0]["verifier"]), ("confirmed", "V1"))
+        self.assertEqual(self.log()[-1]["by"], "V1")
+        result = self.as_("V1", "verify", "R1-01", "confirmed", "--verifier", "V2")
+        self.assertIn("V1 records only its own verifications", result.stderr)
+        result = self.as_("R1", "verify", "R1-01", "refuted")
+        self.assertIn("never the sole verifier of its own finding", result.stderr)
+        self.refused("verify", "R1-01", "confirmed", contains="verify needs --verifier")
+
+    def test_a_finding_needs_a_running_cell(self):
+        self.assertOk(self.as_("R1", "set", "C01/G1", "covered"))
+        result = self.as_("R1", "finding", "R1-01", "--cell", "C01/G1", "--kind", "question", "--title", "t",
+                          "--body", "x")
+        self.assertExit(result, 1)
+        self.assertIn("C01/G1 is not running for R1", result.stderr)
+
+    def test_body_from_stdin_inside_a_batch_is_refused_clearly(self):
+        result = self.as_("R1", "batch", "-", input="finding R1-01 --cell C01/G1 --kind question --title t --body -\n")
+        self.assertExit(result, 1)
+        self.assertIn("the batch uses; put the text into the line", result.stderr)
+
+    def test_parallel_subagents_do_not_lose_records(self):
+        cells = [f"C01/G{n}" for n in range(3, 9)]
+        for cell in cells:
+            self.ok("group", cell.split("/")[1], "--perspectives", "Correctness and regressions")
+        self.ok("cell", "C01", *[c.split("/")[1] for c in cells])
+        for n, cell in enumerate(cells, 3):
+            self.ok("start", "--owner", f"R{n}", cell)
+        procs = [subprocess.Popen([sys.executable, str(REVIEW), str(self.dir), "--as", f"R{n}", "batch", "-"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  cwd=self.tmp, env={**os.environ, **self.env})
+                 for n in range(3, 9)]
+        for n, proc in enumerate(procs, 3):
+            proc.stdin.write(f"finding R{n}-01 --cell C01/G{n} --kind question --title t --body x\n"
+                             f"set C01/G{n} covered\n")
+            proc.stdin.close()
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=60), 0, proc.stderr.read())
+        s = self.state()
+        self.assertEqual(sorted(s["findings"]), [f"R{n}-01" for n in range(3, 9)])
+        self.assertTrue(all(s["cells"][c]["status"] == "covered" for c in cells))
 
 
 if __name__ == "__main__":

@@ -138,8 +138,8 @@ The author runs each new script with `run ID`, fixes what is the script's fault 
 `run --todo` and reads the compact lines; it does not open the result files of passed scenarios. A pass
 that may outlast the shell's command timeout runs as a background command or group by group.
 
-For each failing scenario read `result ID` and, when needed, its failure screenshot, and record
-`triage`: an application bug (`app`, with a finding), a script bug (`script`, back to its author), an
+Read the failing scenarios with one `result --failed` and, when needed, their failure screenshots,
+and record `triage`: an application bug (`app`, with a finding), a script bug (`script`, back to its author), an
 environment problem (`env`, blocked) or an unstable result (`flaky`, after `run ID --repeat 3`). Tell
 the bug of the application from the environment and the test script; do not report a bug created by
 inconsistent fixtures as a product bug. Do not fix application code during the pass. Unclear product

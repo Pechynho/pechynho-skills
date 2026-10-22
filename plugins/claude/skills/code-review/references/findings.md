@@ -1,8 +1,9 @@
 # Outputs and evidence
 
 The format is shared by reviewers, verifiers and the synthesis regardless of how the information is
-passed. Use brief structured text; no particular serialization format is required. The orchestrator
-stores each returned finding as one file per the [review tool](../shared/review-tool.md).
+passed. Use brief structured text; no particular serialization format is required. Each finding is one file,
+which its reviewer records through the [review tool](../shared/review-tool.md) and each verifier
+extends with its verification.
 
 ## Reviewer finding
 
@@ -24,7 +25,11 @@ Always back it with a scenario. A purely optional improvement must not be presen
 
 Every reviewer also hands over the inspected areas, checks and limitations, even without any finding.
 It names the concrete files or sections of its assigned scope that remained unchecked so that the
-orchestrator can arrange a follow-up; a general statement about a risk-based check is not enough.
+orchestrator can arrange a follow-up; a general statement about a risk-based check is not enough. Per
+cell it lists the files it skipped as not relevant to the cell's perspectives, each with a reason; path
+patterns are fine (`templates/**=no logic of this group`). For the impact outside its chunk it lists
+the files it checked and those it found affected but did not check, and the changed contracts other
+chunks may depend on.
 It records every bug found in old code or outside the feature with the same evidence and passes it to
 verification, marked as an existing problem outside the change; age or unrelatedness to the feature
 is no reason to omit a finding.

@@ -43,7 +43,8 @@ resolves the newest SOL and LUNA models; see the repository README); spawn them 
 |---|---|---|---|
 | `pechynho_worker` | stronger | inherited | implementation with tests, plan authoring, fixes needing judgment |
 | `pechynho_worker_light` | weaker | inherited | bounded work that meets the weaker-tier criteria above |
-| `pechynho_analyst` | stronger | `read-only` | code reviewers, finding verifiers, plan validators, review synthesis, exploration |
+| `pechynho_analyst` | stronger | `read-only` | plan validators, review synthesis, exploration |
+| `pechynho_reviewer` | stronger | `workspace-write`, to record its results into the review folder in the work directory; it does not edit the project | code reviewers and finding verifiers |
 | `pechynho_browser_tester` | stronger | inherited | click-through and visual testers of [playwright-testing](../../playwright-testing/SKILL.md) |
 
 If the custom agents are not installed, use the built-in `worker` or `explorer` agent with the tier's

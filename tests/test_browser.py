@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -755,9 +756,8 @@ class TriageAndSetTest(BrowserCase):
         self.assertEqual(self.sc("S1")["outcome"], "blocked")
         self.ok("set", "S1", "pending")
         self.assertEqual((self.sc("S1")["outcome"], self.sc("S1")["reason"]), ("pending", None))
-        result = self.bt("set", "S1", "blocked")
-        self.assertExit(result, 2)
-        self.assertIn("needs --reason", result.stderr)
+        # A refusal of the command rather than wrong usage, so that it also holds in a batch.
+        self.refused("set", "S1", "blocked", pattern="set blocked needs --reason")
         self.refused("set", "NOPE", "pending")
         self.assertEqual(self.log("set")[0]["outcome"], "unverified")
 
@@ -1168,6 +1168,165 @@ class LogTest(BrowserCase):
         for type_ in ("decision", "note", "explore"):
             self.ok("log", type_, "text=x")
         self.assertEqual(len(self.log()), 6)
+
+
+class SeveralIdsTest(BrowserCase):
+    """Commands that change one item by ID take several; all of them change or none."""
+
+    def setUp(self):
+        super().setUp()
+        self.init()
+        for sid in ("S1", "S2"):
+            self.scenario(sid)
+
+    def snapshot(self) -> tuple:
+        return tuple(p.read_bytes() for p in (self.dir / "testing.json", self.dir / "log.jsonl"))
+
+    def refused_unchanged(self, *args, pattern: str) -> None:
+        before = self.snapshot()
+        self.refused(*args, pattern=pattern)
+        self.assertEqual(self.snapshot(), before)
+
+    def with_state(self, change) -> None:
+        state = self.state()
+        change(state)
+        self.save_state(state)
+
+    def test_set_several(self):
+        result = self.ok("set", "S1", "S2", "blocked", "--reason", "no account")
+        self.assertEqual(result.stdout.splitlines(), ["S1: blocked", "S2: blocked"])
+        self.assertEqual([(self.sc(s)["outcome"], self.sc(s)["reason"]) for s in ("S1", "S2")],
+                         [("blocked", "no account")] * 2)
+        self.assertEqual([(r["scenario"], r["outcome"], r["reason"]) for r in self.log("set")],
+                         [("S1", "blocked", "no account"), ("S2", "blocked", "no account")])
+
+    def test_set_several_is_all_or_nothing(self):
+        self.refused_unchanged("set", "S1", "NOPE", "S2", "blocked", "--reason", "x", pattern="NOPE: unknown scenario NOPE")
+        self.refused_unchanged("set", "S1", "S2", "unverified", pattern="needs --reason")
+
+    def test_result_of_several(self):
+        self.scenario("S3")
+        self.with_state(lambda state: state["scenarios"]["S2"].update(outcome="flaky"))
+        out = self.ok("result", "S1", "S3").stdout
+        self.assertRegex(out, r"(?s)^S1 .*not run yet\n\nS3 .*not run yet\n$")
+        self.assertRegex(self.ok("result", "--failed").stdout, r"^S2 .*outcome=flaky")
+        self.assertEqual(re.findall(r"(?m)^(S\d) ", self.ok("result", "S1", "--group", "g1").stdout), ["S1", "S2", "S3"])
+        self.refused("result", "S1", "NOPE", pattern="unknown scenario NOPE")
+        self.refused("result", pattern="name scenarios, a --group or --failed")
+        self.with_state(lambda state: state["scenarios"]["S2"].update(outcome="pending"))
+        self.assertIn("no failing, failed or flaky scenario", self.ok("result", "--failed").stdout)
+
+    def test_triage_several(self):
+        (self.dir / "findings" / "F1.md").write_text("# F1\n")
+        self.ok("finding", "F1", "--scenarios", "S1", "--kind", "functional_bug", "--title", "Save fails")
+
+        def failing(state, *ids):
+            for sid in ids:
+                state["scenarios"][sid]["outcome"] = "failing"
+        self.with_state(lambda s: failing(s, "S1"))
+        self.refused_unchanged("triage", "S1", "S2", "app", "--finding", "F1", pattern=r"refused: S2 is pending")
+        self.with_state(lambda s: failing(s, "S2"))
+        self.refused_unchanged("triage", "S1", "S2", "app", "--finding", "F9", pattern="S1: unknown finding F9")
+        result = self.ok("triage", "S1", "S2", "app", "--finding", "F1", "--note", "500 on save")
+        self.assertEqual(len(result.stdout.splitlines()), 2)
+        self.assertEqual([self.sc(s)["outcome"] for s in ("S1", "S2")], ["failed", "failed"])
+        self.assertEqual(self.state()["findings"]["F1"]["scenarios"], ["S1", "S2"])
+        self.assertEqual([(r["scenario"], r["cause"], r["finding"]) for r in self.log("triage")],
+                         [("S1", "app", "F1"), ("S2", "app", "F1")])
+
+    def test_judge_several(self):
+        def shots(state, sid, *keys):
+            state["scenarios"][sid]["shots"] = {
+                key: {"path": f"results/{sid}/r001/shots/{key}.png", "run": "r001", "judgment": "pending"} for key in keys}
+        self.with_state(lambda s: (shots(s, "S1", "home@desktop", "home@mobile"), shots(s, "S2", "home@mobile")))
+        self.refused_unchanged("judge", "S1", "S2", "ok", "--shots", "home@desktop",
+                               pattern="S2: unknown screenshot home@desktop")
+        self.refused_unchanged("judge", "S1", "S2", "issue", pattern="needs --finding or --note")
+        result = self.ok("judge", "S1", "S2", "ok", "--shots", "home@mobile")
+        self.assertEqual(result.stdout.splitlines(), ["S1: 1 screenshot(s) ok", "S2: 1 screenshot(s) ok"])
+        self.assertEqual(self.sc("S1")["shots"]["home@desktop"]["judgment"], "pending")
+        self.assertEqual(self.sc("S2")["shots"]["home@mobile"]["judged"]["judgment"], "ok")
+        self.assertEqual([(r["scenario"], r["shots"]) for r in self.log("judge")],
+                         [("S1", ["home@mobile"]), ("S2", ["home@mobile"])])
+        # Without --shots each scenario needs a pending screenshot of its own.
+        self.refused_unchanged("judge", "S1", "S2", "ok", pattern="S2: no pending screenshots")
+
+    def test_resolve_several(self):
+        for fid in ("F1", "F2"):
+            self.ok("finding", fid, "--scenarios", "S1", "--kind", "ui_bug", "--title", "t")
+        self.refused_unchanged("resolve", "F1", "F9", "fixed", "--reason", "x", pattern="F9: unknown finding F9")
+        self.ok("resolve", "F1", "F2", "fixed", "--reason", "commit abc")
+        self.assertEqual([self.state()["findings"][f]["status"] for f in ("F1", "F2")], ["fixed", "fixed"])
+        self.assertEqual([r["finding"] for r in self.log("resolve")], ["F1", "F2"])
+
+
+class BatchTest(BrowserCase):
+    def setUp(self):
+        super().setUp()
+        self.init()
+        self.scenario("S1")
+
+    def batch(self, text: str, *, source: str = "-"):
+        return run_tool(BROWSER, self.dir, "batch", source, cwd=self.tmp, env=self.env(), input=text)
+
+    def snapshot(self) -> tuple:
+        return tuple(p.read_bytes() for p in (self.dir / "testing.json", self.dir / "log.jsonl"))
+
+    def refused_batch(self, text: str, message: str) -> None:
+        before = self.snapshot()
+        result = self.batch(text)
+        self.assertExit(result, 1)
+        self.assertIn(f"refused: {message}", result.stderr)
+        self.assertIn("nothing was written", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_both_line_forms_comments_and_blank_lines(self):
+        result = self.batch(
+            "# set up the pass\n"
+            "scenario S3 --title 'Third one' --group g2\n"
+            "\n"
+            '["finding", "F1", "--scenarios", "S1", "S3", "--kind", "ui_bug", "--title", "A \\"quoted\\" title"]\n'
+            "   # indented comment\n"
+            'set S1 S3 blocked --reason "no account"\n'
+            "resolve F1 fixed --reason done\n"
+            "log note text=batched\n")
+        self.assertOk(result)
+        lines = result.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("S3 added"))
+        self.assertEqual(lines[2:], ["S1: blocked", "S3: blocked", "F1: fixed", "logged note", "batch: 5 commands applied"])
+        state = self.state()
+        self.assertEqual(state["findings"]["F1"]["title"], 'A "quoted" title')
+        self.assertEqual(state["findings"]["F1"]["status"], "fixed")
+        self.assertEqual([state["scenarios"][s]["outcome"] for s in ("S1", "S3")], ["blocked", "blocked"])
+        self.assertEqual([r["type"] for r in self.log()[-6:]], ["scenario", "finding", "set", "set", "resolve", "note"])
+
+    def test_batch_from_a_file(self):
+        commands = self.tmp / "commands.txt"
+        commands.write_text("set S1 unverified --reason 'cannot be scripted'\n")
+        self.assertOk(self.batch("", source=str(commands)))
+        self.assertEqual(self.sc("S1")["outcome"], "unverified")
+        self.refused("batch", str(self.tmp / "missing.txt"), pattern="cannot read")
+
+    def test_a_refusal_on_a_later_line_writes_nothing(self):
+        self.refused_batch("scenario S3 --title Three --group g2\n"
+                           "set S1 S3 blocked --reason x\n"
+                           "# a comment keeps the line numbers\n"
+                           "resolve F9 fixed --reason x\n",
+                           "line 4: unknown finding F9; nothing was written")
+        self.assertNotIn("S3", self.state()["scenarios"])
+
+    def test_wrong_usage_in_a_line(self):
+        self.refused_batch("set S1 failed --reason x\n", "line 1: wrong usage: argument outcome: invalid choice")
+        self.refused_batch("log note text=x\nset S1 blocked\n", "line 2: set blocked needs --reason")
+        self.refused_batch('["set", 1]\n', "line 1: expected a JSON array of strings")
+        self.refused_batch("[not json\n", "line 1: ")
+        self.refused_batch("set S1 blocked --reason 'open quote\n", "line 1: No closing quotation")
+
+    def test_commands_not_allowed_in_a_batch(self):
+        self.refused_batch("log note text=x\nrun --all\n", "line 2: run is not allowed in a batch")
+        self.refused_batch("batch -\n", "line 1: batch is not allowed in a batch")
+        self.refused_batch("status\n", "line 1: status is not allowed in a batch")
 
 
 class HelpersTest(unittest.TestCase):

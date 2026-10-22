@@ -2,29 +2,42 @@
 """Track a code review: chunks of the diff, perspective groups, coverage cells, waves and findings.
 
 Usage:
-    review.py DIR init --scope S --base REF --head REF [--working-tree] [--wave-size N]
+    review.py DIR [--as ID] COMMAND ...                   --as: a reviewer or verifier recording its own results
+    review.py DIR init --scope S --base REF [--head REF] [--working-tree] [--wave-size N]
                        [--single --groups G1="Perspective;Perspective" ...]
+    review.py DIR init --scope S --audit PATTERN [PATTERN ...] [--head REF | --working-tree] ...
+                                                          review whole files of an area, not a change
+    review.py DIR audit-diff FILE                         the current full-content diff of an audit
     review.py DIR triage [--chunk-lines N] [--out FILE]   propose chunks from DIR/diff.patch
     review.py DIR chunks FILE                             load the (edited) chunk proposal
-    review.py DIR chunk ID --title T [--files F ...] [--risk R] [--treatment T] [--integration]
+    review.py DIR chunk ID [--title T] [--files F ...] [--risk R] [--treatment T] [--integration]
     review.py DIR group ID --perspectives P [P ...] [--title T]
     review.py DIR cell CHUNK GROUP [GROUP ...]            cells that a reviewer has to cover
-    review.py DIR omit CHUNK GROUP --reason R             a perspective group not relevant to a chunk
+    review.py DIR omit CHUNK [CHUNK ...] --groups G [G ...] --reason R
+                                                          perspective groups not relevant to chunks
+    review.py DIR overview                                one line per chunk, the orientation for reviewers
     review.py DIR estimate                                chunks, cells and waves still needed
     review.py DIR approve --coverage full|risk_first [--note N]
     review.py DIR next [--limit N]                        cells to brief in the next wave
     review.py DIR start --owner R CELL [CELL ...]         cells handed to reviewer R in a wave
-    review.py DIR set CELL STATUS [--unchecked F ...] [--reason R]
+    review.py DIR set CELL [CELL ...] STATUS [--unchecked F ...] [--skipped PATTERN=REASON ...] [--reason R]
+                      [--impact F ...] [--impact-unchecked F ...]   files outside the chunk the change affects
     review.py DIR finding ID --cell CELL --kind K --title T [--severity S] [--files F ...] [--outside] [--reviewer R]
-    review.py DIR verify ID VERDICT --verifier V [--severity S]
-    review.py DIR resolve ID STATUS --reason R [--duplicate-of ID]
+                          [--body TEXT|-]                 the full finding, written to findings/ID.md
+    review.py DIR verify ID [ID ...] VERDICT --verifier V [--severity S] [--note TEXT|-]
+    review.py DIR resolve ID [ID ...] STATUS --reason R [--duplicate-of ID]
     review.py DIR findings [--status S] [--chunk C] [--all]
     review.py DIR coverage                                gaps in the coverage of the diff
     review.py DIR refresh FILE [--dry-run]                compare a fresh diff with diff.patch and reopen what changed
     review.py DIR status                                  derived overview, the entry point on resume
     review.py DIR validate
     review.py DIR log TYPE key=value ...                  append a record (check, decision, note)
+    review.py DIR batch FILE|-                            several recording commands, all or nothing
 
+File arguments take glob patterns: * within a directory, ** across directories, a trailing / for a
+whole directory. A pattern is matched against the files of the diff (or of the repository for
+--impact, --impact-unchecked and --audit) and stored as the files it matched; a pattern that
+matches nothing is refused.
 The format is described in shared/review-tool.md. Python 3.8+, standard library only.
 Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong usage.
 """
@@ -32,17 +45,25 @@ Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+
+try:
+    import fcntl
+except ImportError:  # Windows: commands are not serialized between processes
+    fcntl = None
 
 SCHEMA_VERSION = 1
 RISKS = ("high", "medium", "low")
@@ -124,6 +145,13 @@ class Review:
         self.diff_path = root / "diff.patch"
         self.findings_dir = root / "findings"
         self._state: dict | None = None
+        self._pending_log: list[dict] | None = None  # buffered while a transaction runs
+        self._pending_files: dict[Path, str] = {}
+        self._dirty = False
+        self.actor: str | None = None  # a subagent recording its own results, --as
+        self.in_batch = False
+        self._diff_files: list[str] | None = None
+        self._impact_universe: set[str] | None = None
 
     @property
     def state(self) -> dict:
@@ -133,24 +161,96 @@ class Review:
 
     def save(self) -> None:
         self.state["updated_at"] = now()
+        if self._pending_log is not None:
+            self._dirty = True
+            return
         write_json(self.state_path, self.state)
 
     def append_log(self, record: dict) -> None:
         record = {"at": now(), **record}
+        if self.actor:
+            record["by"] = self.actor
+        if self._pending_log is not None:
+            self._pending_log.append(record)
+            return
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    def read_file(self, path: Path) -> str | None:
+        if path in self._pending_files:
+            return self._pending_files[path]
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def write_file(self, path: Path, text: str) -> None:
+        """A finding file, written with the state at the end of the transaction."""
+        if self._pending_log is None:
+            path.write_text(text, encoding="utf-8")
+        else:
+            self._pending_files[path] = text
+
+    @contextlib.contextmanager
+    def locked(self):
+        """Serialize the commands of the orchestrator and of the subagents recording their own results."""
+        with open(self.root / ".lock", "a+") as handle:
+            if fcntl:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                self._state = None  # read the state another process may have changed
+                self._diff_files = self._impact_universe = None
+                yield
+            finally:
+                if fcntl:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """Write the state, the log and the finding files only when the whole block succeeds; a refusal
+        leaves them as they were."""
+        self._pending_log, self._pending_files, self._dirty = [], {}, False
+        try:
+            yield
+        except BaseException:
+            self._state = None
+            raise
+        else:
+            for path, text in self._pending_files.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            if self._dirty:
+                write_json(self.state_path, self.state)
+            if self._pending_log:
+                with self.log_path.open("a", encoding="utf-8") as f:
+                    for record in self._pending_log:
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        finally:
+            self._pending_log, self._pending_files, self._dirty = None, {}, False
+
     def log(self) -> list[dict]:
-        if not self.log_path.exists():
-            return []
         records = []
-        for n, line in enumerate(self.log_path.read_text(encoding="utf-8").splitlines(), 1):
-            if line.strip():
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError as e:
-                    raise Refused(f"{self.log_path}:{n}: invalid JSON: {e}")
-        return records
+        if self.log_path.exists():
+            for n, line in enumerate(self.log_path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.strip():
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        raise Refused(f"{self.log_path}:{n}: invalid JSON: {e}")
+        return records + list(self._pending_log or [])
+
+    def diff_files(self) -> list[str]:
+        if self._diff_files is None:  # parsed once per command or batch; only refresh replaces the diff
+            self._diff_files = sorted(parse_diff(self.diff_path)) if self.diff_path.exists() else []
+        return self._diff_files
+
+    def impact_universe(self) -> set[str]:
+        """The repository on disk and the diff, listed once per command or batch."""
+        if self._impact_universe is None:
+            rev = self.state["revision"]
+            files = set(repo_files(rev["repo"], rev["head"], True)) if rev.get("repo") else set()
+            self._impact_universe = files | set(self.diff_files())
+        return self._impact_universe
+
+    def repo(self) -> str | None:
+        return self.state["revision"].get("repo")
 
     def chunk(self, cid: str) -> dict:
         if cid not in self.state["chunks"]:
@@ -299,6 +399,139 @@ def pack_flat(files: list[dict], budget: int) -> list[list[dict]]:
     return pack(files, budget, depth=10_000)
 
 
+# --- patterns and whole-file diffs --------------------------------------------------------------
+
+
+def is_pattern(item: str) -> bool:
+    return item.endswith("/") or any(c in item for c in "*?[")
+
+
+def glob_regex(pattern: str) -> re.Pattern:
+    """A git-like glob: * and ? stay within a directory, ** crosses directories, a trailing / is a directory."""
+    pattern = pattern[2:] if pattern.startswith("./") else pattern
+    if pattern.endswith("/"):
+        pattern += "**"
+    out, i = [], 0
+    while i < len(pattern):
+        c = pattern[i]
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+            continue
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+            continue
+        if c == "*":
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[" and pattern.find("]", i + 2) != -1:
+            end = pattern.find("]", i + 2)
+            body = pattern[i + 1:end].replace("\\", "\\\\")
+            out.append("[" + ("^" + body[1:] if body.startswith("!") else body) + "]")
+            i = end + 1
+            continue
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return re.compile("".join(out))
+
+
+def expand(items: list[str], universe, what: str, literal: str = "keep") -> list[str]:
+    """Replace each pattern by the files of the universe it matches, in order and without duplicates.
+
+    A literal item is kept as it is (literal="keep"), or must be in the universe (literal="require"). Like
+    git, an item that names a file of the universe exactly is that file, also with [ in its name."""
+    universe = sorted(universe)
+    known = set(universe)
+    out: list[str] = []
+    for item in items:
+        path = item[2:] if item.startswith("./") else item
+        if path in known:
+            out.append(path)
+        elif is_pattern(item):
+            regex = glob_regex(item)
+            matched = [f for f in universe if regex.fullmatch(f)]
+            if not matched:
+                raise Refused(f"{item} matches no file of {what}")
+            out.extend(matched)
+        else:
+            if literal == "require":
+                raise Refused(f"{item} is not a file of {what}")
+            out.append(path)
+    return list(dict.fromkeys(out))
+
+
+def repo_files(repo: str, head: str | None, working_tree: bool) -> list[str]:
+    """The files of the repository at head, or on disk (tracked and untracked, not ignored)."""
+    if working_tree:
+        out = git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    else:
+        out = git(repo, "ls-tree", "-r", "-z", "--name-only", head or "HEAD")
+    if out is None:
+        raise Refused(f"cannot list the files of the repository {repo}")
+    files = sorted({f for f in out.split("\0") if f})
+    if working_tree:
+        files = [f for f in files if os.path.islink(os.path.join(repo, f)) or os.path.isfile(os.path.join(repo, f))]
+    return files
+
+
+def file_contents(repo: str, head: str | None, working_tree: bool, paths: list[str]) -> dict[str, bytes]:
+    if working_tree:
+        contents = {}
+        for p in paths:
+            full = os.path.join(repo, p)
+            contents[p] = os.readlink(full).encode("utf-8") if os.path.islink(full) else Path(full).read_bytes()
+        return contents
+    request = "".join(f"{head or 'HEAD'}:{p}\n" for p in paths).encode("utf-8")
+    result = subprocess.run(["git", "-C", repo, "cat-file", "--batch"], input=request, capture_output=True)
+    if result.returncode != 0:
+        raise Refused(f"git cat-file failed: {result.stderr.decode('utf-8', 'replace').strip()}")
+    data, pos, contents = result.stdout, 0, {}
+    for p in paths:
+        end = data.index(b"\n", pos)
+        header = data[pos:end].decode("utf-8", "replace").split()
+        pos = end + 1
+        if len(header) < 3:  # missing
+            continue
+        size_ = int(header[2])
+        if header[1] == "blob":
+            contents[p] = data[pos:pos + size_]
+        pos += size_ + 1
+    return contents
+
+
+def whole_file_diff(path: str, content: bytes) -> str:
+    """The file as a new file of a unified diff, so that the diff tooling covers whole files."""
+    head = f"diff --git a/{path} b/{path}\nnew file mode 100644\n"
+    if b"\0" in content:
+        return head + f"Binary files /dev/null and b/{path} differ\n"
+    if not content:
+        return head
+    text = content.decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines.pop()
+    body = "".join(f"+{line}\n" for line in lines)
+    tail = "" if text.endswith("\n") else "\\ No newline at end of file\n"
+    return head + f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n" + body + tail
+
+
+def write_audit_diff(revision: dict, out: Path) -> list[str]:
+    """Write the whole files the audit patterns match; each pattern has to match a file."""
+    repo, head, working_tree = revision["repo"], revision["head"], revision["working_tree"]
+    if not repo:
+        raise Refused("an audit needs a git repository; run init inside it")
+    files = expand(revision["audit"], repo_files(repo, head, working_tree), "the repository", literal="require")
+    contents = file_contents(repo, head, working_tree, files)
+    with out.open("w", encoding="utf-8", newline="") as f:
+        for path in files:
+            if path in contents:
+                f.write(whole_file_diff(path, contents[path]))
+    return [p for p in files if p in contents]
+
+
 def common_dir(paths: list[str]) -> str:
     split = [PurePosixPath(p).parts[:-1] for p in paths]
     prefix = []
@@ -356,6 +589,15 @@ def validate(review: Review) -> tuple[list[str], list[str]]:
             errors.append(f"cell {key}: partial without the unchecked files or sections")
         if cell.get("status") == "omitted" and not cell.get("reason"):
             errors.append(f"cell {key}: omitted without a reason")
+        skipped = cell.get("skipped") or {}
+        chunk_files = set(s["chunks"].get(chunk, {}).get("files", []))
+        for path in sorted(set(skipped) - chunk_files):
+            errors.append(f"cell {key}: skipped {path} is not a file of chunk {chunk}")
+        for path in sorted(set(skipped) & set(cell.get("unchecked") or [])):
+            errors.append(f"cell {key}: {path} is both skipped and unchecked")
+        for path, reason in skipped.items():
+            if not reason:
+                errors.append(f"cell {key}: skipped {path} without a reason")
     for cid in s["chunks"]:
         if s["chunks"][cid].get("treatment") == "excluded" or s["chunks"][cid].get("kind") == "integration":
             continue
@@ -402,7 +644,12 @@ def cmd_init(review: Review, args) -> None:
     review.findings_dir.mkdir(exist_ok=True)
     repo = git(None, "rev-parse", "--show-toplevel")
     revision = {"base": args.base, "head": args.head, "working_tree": args.working_tree, "repo": repo,
-                "base_sha": resolve_sha(repo, args.base), "head_sha": resolve_sha(repo, args.head)}
+                "base_sha": resolve_sha(repo, args.base) if args.base else None,
+                "head_sha": resolve_sha(repo, args.head)}
+    if args.audit:
+        revision["audit"] = args.audit
+        files = write_audit_diff(revision, review.diff_path)
+        print(f"audit: {len(files)} whole files written to diff.patch")
     review._state = {
         "schema_version": SCHEMA_VERSION,
         "scope": args.scope,
@@ -426,7 +673,7 @@ def cmd_init(review: Review, args) -> None:
     review.append_log({"type": "init", "scope": args.scope, "revision": review.state["revision"],
                        "single": args.single})
     print(f"created review.json, log.jsonl and findings/ in {review.root}")
-    if not revision["head_sha"] or not revision["base_sha"]:
+    if not revision["head_sha"] or not (revision["base_sha"] or args.audit):
         print("warning: base or head not resolved in a git repository; status cannot report moved revisions")
     if args.single:
         print(f"one chunk C01 ({len(review.state['chunks']['C01']['files'])} files), "
@@ -449,6 +696,16 @@ def single(review: Review, groups: list[str]) -> None:
             raise Refused(f"expected G1=\"Perspective;Perspective\", got {spec!r}")
         s["groups"][gid] = {"title": ", ".join(perspectives), "perspectives": perspectives}
         s["cells"][cell_id("C01", gid)] = {"status": "pending", "owner": None, "wave": None, "unchecked": []}
+
+
+def cmd_audit_diff(review: Review, args) -> None:
+    revision = review.state["revision"]
+    if not revision.get("audit"):
+        raise Refused("not an audit; write the fresh diff the same way as diff.patch")
+    if args.file.resolve() == review.diff_path.resolve():
+        raise Refused("write the fresh diff into another file, e.g. diff.new.patch")
+    files = write_audit_diff(revision, args.file)
+    print(f"{len(files)} whole files written to {args.file}; continue with refresh")
 
 
 def cmd_triage(review: Review, args) -> None:
@@ -485,7 +742,14 @@ def cmd_chunks(review: Review, args) -> None:
     for cid in proposal.get("chunks", {}):
         if cid in started:
             raise Refused(f"chunk {cid} already has reviewed cells; change it with chunk instead")
+    diff = parse_diff(review.diff_path) if review.diff_path.exists() else {}
     for cid, chunk in proposal["chunks"].items():
+        try:
+            chunk["files"] = expand(chunk.get("files", []), diff, "diff.patch")
+        except Refused as e:
+            raise Refused(f"chunk {cid}: {e}")
+        if diff:
+            chunk["lines"] = chunk_lines(chunk["files"], diff)
         chunk.setdefault("risk", "medium")
         chunk.setdefault("treatment", "full")
         if chunk["risk"] not in RISKS or chunk["treatment"] not in TREATMENTS:
@@ -498,14 +762,32 @@ def cmd_chunks(review: Review, args) -> None:
     print(f"loaded {len(proposal['chunks'])} chunks")
 
 
+def outside_files(review: Review, items: list[str], own: list[str], what: str) -> list[str]:
+    """Files outside a chunk that its change affects, as a reviewer found them.
+
+    Patterns match the repository on disk and the diff; files of the chunk itself are left out."""
+    if not items:
+        return []
+    universe = review.impact_universe()
+    files = expand(items, universe, "the repository", literal="require" if universe else "keep")
+    named = [i for i in items if i in own]
+    if named:
+        raise Refused(f"{', '.join(named)} in {what}; its own files are not its impact")
+    return sorted(f for f in files if f not in own)
+
+
 def cmd_chunk(review: Review, args) -> None:
     chunk = review.state["chunks"].get(args.id, {})
-    chunk["title"] = args.title
+    if not chunk and not args.title:
+        raise Refused(f"new chunk {args.id} needs --title")
+    if args.title:
+        chunk["title"] = args.title
     chunk["risk"] = args.risk or chunk.get("risk", "medium")
     chunk["treatment"] = args.treatment or chunk.get("treatment", "full")
     if args.files is not None:
-        chunk["files"] = sorted(set(args.files))
-        chunk["lines"] = chunk_lines(chunk["files"], parse_diff(review.diff_path))
+        diff = parse_diff(review.diff_path)
+        chunk["files"] = sorted(expand(args.files, diff, "diff.patch"))
+        chunk["lines"] = chunk_lines(chunk["files"], diff)
     chunk.setdefault("files", [])
     if args.integration:
         chunk["kind"] = "integration"
@@ -542,15 +824,26 @@ def cmd_cell(review: Review, args) -> None:
 
 
 def cmd_omit(review: Review, args) -> None:
-    review.chunk(args.chunk)
-    key = cell_id(args.chunk, args.group)
-    cell = review.state["cells"].get(key)
-    if cell and cell["status"] not in ("pending", "omitted"):
-        raise Refused(f"{key} is already {cell['status']}")
-    review.state["cells"][key] = {"status": "omitted", "reason": args.reason}
+    for chunk in args.chunks:
+        review.chunk(chunk)
+        for group in args.groups:
+            if group not in review.state["groups"]:
+                raise Refused(f"unknown group {group}")
+            key = cell_id(chunk, group)
+            cell = review.state["cells"].get(key)
+            if cell and cell["status"] not in ("pending", "omitted"):
+                raise Refused(f"{key} is already {cell['status']}")
+            review.state["cells"][key] = {"status": "omitted", "reason": args.reason}
+            review.append_log({"type": "cell", "id": key, "status": "omitted", "reason": args.reason})
+            print(f"{key}: omitted")
     review.save()
-    review.append_log({"type": "cell", "id": key, "status": "omitted", "reason": args.reason})
-    print(f"{key}: omitted")
+
+
+def cmd_overview(review: Review, args) -> None:
+    """One line per chunk, the orientation a reviewer gets about the rest of the review."""
+    for cid, c in review.state["chunks"].items():
+        where = "links between chunks" if c.get("kind") == "integration" else common_dir(c.get("files", []) or ["."])
+        print(f"{cid}  [{c.get('risk')}/{c.get('treatment')}]  {len(c.get('files', [])):>4} files  {c['title']}  ({where})")
 
 
 def cmd_estimate(review: Review, args) -> None:
@@ -638,38 +931,120 @@ def cmd_start(review: Review, args) -> None:
     print(f"wave {wave}: {args.owner} -> {', '.join(args.cells)}")
 
 
+def skipped_specs(specs: list[str]) -> list[tuple[str, str]]:
+    out = []
+    for spec in specs:
+        pattern, sep, reason = spec.partition("=")
+        if not sep or not pattern.strip() or not reason.strip():
+            raise Refused(f"expected --skipped PATTERN=REASON, got {spec!r}")
+        out.append((pattern.strip(), reason.strip()))
+    return out
+
+
 def cmd_set(review: Review, args) -> None:
-    cell = review.cell(args.cell)
     if args.status == "partial" and not args.unchecked:
         raise Refused("partial needs --unchecked with the concrete files or sections left unchecked")
     if args.status == "omitted" and not args.reason:
         raise Refused("omitted needs --reason")
-    previous = cell["status"]
-    cell["status"] = args.status
-    cell["unchecked"] = args.unchecked or []
-    if args.reason:
-        cell["reason"] = args.reason
-    if args.status == "pending":
-        cell.update({"owner": None, "wave": None})
+    for option in ("skipped", "impact", "impact_unchecked"):
+        if getattr(args, option) and args.status not in ("covered", "partial"):
+            raise Refused(f"--{option.replace('_', '-')} belongs to a covered or partial cell")
+    specs = skipped_specs(args.skipped or [])
+    if review.actor and args.status not in ("covered", "partial"):
+        raise Refused(f"{review.actor} records covered or partial; {args.status} is the orchestrator's decision")
+    for key in args.cells:
+        cell = review.cell(key)
+        if review.actor and (cell.get("owner") != review.actor or cell["status"] != "running"):
+            raise Refused(f"{key} is not running for {review.actor}")
+        chunk = review.chunk(key.partition("/")[0])
+        files = chunk.get("files", [])
+        try:
+            unchecked = expand(args.unchecked or [], files, f"chunk {key}")
+            skipped = {}
+            for pattern, reason in specs:
+                for path in expand([pattern], files, f"chunk {key}", literal="require"):
+                    skipped[path] = reason
+            impact = outside_files(review, args.impact or [], files, "the chunk")
+            impact_unchecked = outside_files(review, args.impact_unchecked or [], files, "the chunk")
+        except Refused as e:
+            raise Refused(f"{key}: {e}")
+        both = sorted(set(skipped) & set(unchecked))
+        if both:
+            raise Refused(f"{key}: {', '.join(both)} both skipped and unchecked")
+        both = sorted(set(impact) & set(impact_unchecked))
+        if both:
+            raise Refused(f"{key}: {', '.join(both)} both in --impact and --impact-unchecked")
+        previous = cell["status"]
+        cell["status"] = args.status
+        cell["unchecked"] = unchecked
+        if args.status in ("covered", "partial"):
+            # A follow-up run reports on the files left unchecked; the earlier skips stay.
+            kept = {p: r for p, r in (cell.get("skipped") or {}).items() if p not in unchecked}
+            cell["skipped"] = {**kept, **skipped}
+            # The impact adds up over the runs; a file checked later is no longer open.
+            checked = sorted(set(cell.get("impact", [])) | set(impact))
+            cell["impact"] = checked
+            cell["impact_unchecked"] = sorted((set(cell.get("impact_unchecked", [])) | set(impact_unchecked))
+                                               - set(checked))
+        for option in ("skipped", "impact", "impact_unchecked"):
+            if not cell.get(option) or args.status not in ("covered", "partial"):
+                cell.pop(option, None)
+        if args.reason:
+            cell["reason"] = args.reason
+        if args.status == "pending":
+            cell.update({"owner": None, "wave": None})
+        record = {"type": "cell", "id": key, "status": args.status, "from": previous}
+        if unchecked:
+            record["unchecked"] = unchecked
+        if skipped:
+            record["skipped"] = skipped
+        if impact:
+            record["impact"] = impact
+        if impact_unchecked:
+            record["impact_unchecked"] = impact_unchecked
+        if args.reason:
+            record["reason"] = args.reason
+        review.append_log(record)
+        notes = [f"{len(skipped)} files skipped"] if skipped else []
+        notes += [f"{len(impact)} impact files checked"] if impact else []
+        notes += [f"{len(impact_unchecked)} impact files not checked"] if impact_unchecked else []
+        print(f"{key}: {previous} -> {args.status}" + (", " + ", ".join(notes) if notes else ""))
     review.save()
-    record = {"type": "cell", "id": args.cell, "status": args.status, "from": previous}
-    if args.unchecked:
-        record["unchecked"] = args.unchecked
-    if args.reason:
-        record["reason"] = args.reason
-    review.append_log(record)
-    print(f"{args.cell}: {previous} -> {args.status}")
+
+
+def body_text(review: Review, value: str, option: str) -> str:
+    if value == "-" and review.in_batch:
+        raise Refused(f"{option} - reads the standard input, which the batch uses; put the text into the line")
+    text = sys.stdin.read() if value == "-" else value
+    if not text.strip():
+        raise Refused(f"{option} is empty")
+    return text if text.endswith("\n") else text + "\n"
 
 
 def cmd_finding(review: Review, args) -> None:
     cell = review.cell(args.cell)
+    if review.actor:
+        if cell.get("owner") != review.actor or cell["status"] != "running":
+            raise Refused(f"{args.cell} is not running for {review.actor}")
+        if args.reviewer not in (None, review.actor):
+            raise Refused(f"{review.actor} records only its own findings")
+        args.reviewer = review.actor
     if args.id in review.state["findings"]:
         raise Refused(f"finding {args.id} already exists; IDs are stable")
-    if not (review.findings_dir / f"{args.id}.md").exists():
-        raise Refused(f"write findings/{args.id}.md with the full finding first")
+    path = review.findings_dir / f"{args.id}.md"
+    if args.body is not None:
+        if review.read_file(path) is not None:
+            raise Refused(f"findings/{args.id}.md already exists")
+        review.write_file(path, body_text(review, args.body, "--body"))
+    elif review.read_file(path) is None:
+        raise Refused(f"write findings/{args.id}.md with the full finding first, or pass it as --body")
     if args.kind == "bug" and not args.severity:
         raise Refused("a bug needs --severity")
-    files = sorted({location_file(f) for f in args.files or []})
+    locations = [location_file(f) for f in args.files or []]
+    if any(is_pattern(f) and f not in review.diff_files() for f in locations):
+        print("warning: a finding's location names concrete files; patterns were expanded against diff.patch")
+        locations = expand(locations, review.diff_files(), "diff.patch")
+    files = sorted(set(locations))
     review.state["findings"][args.id] = {
         "cell": args.cell, "reviewer": args.reviewer or cell.get("owner"), "kind": args.kind, "severity": args.severity,
         "title": args.title, "files": files, "outside": args.outside, "status": "unverified", "verifications": [],
@@ -678,7 +1053,7 @@ def cmd_finding(review: Review, args) -> None:
     review.append_log({"type": "finding", "id": args.id, "status": "unverified", "cell": args.cell})
     print(f"{args.id}: recorded")
     if files and not args.outside and review.diff_path.exists():
-        unknown = [f for f in files if f not in parse_diff(review.diff_path)]
+        unknown = [f for f in files if f not in review.diff_files()]
         if unknown:
             print(f"warning: not in diff.patch, refresh will not track them: {', '.join(unknown)}")
 
@@ -690,37 +1065,51 @@ def location_file(location: str) -> str:
 
 
 def cmd_verify(review: Review, args) -> None:
-    f = review.finding(args.id)
-    if args.verifier == f.get("reviewer"):
-        raise Refused(f"{args.verifier} reported {args.id}; a verifier is never the sole verifier of its own finding")
-    f["verifications"].append({"verifier": args.verifier, "verdict": args.verdict, "at": now()})
-    if args.severity:
-        f["severity"] = args.severity
-    verdicts = {v["verdict"] for v in f["verifications"]}
-    f["status"] = next(iter(verdicts)) if len(verdicts) == 1 else "disputed"
-    verifiers = {v["verifier"] for v in f["verifications"]}
+    if review.actor and args.verifier not in (None, review.actor):
+        raise Refused(f"{review.actor} records only its own verifications")
+    args.verifier = args.verifier or review.actor
+    if not args.verifier:
+        raise Refused("verify needs --verifier")
+    note = body_text(review, args.note, "--note") if args.note is not None else None
+    for fid in args.ids:
+        f = review.finding(fid)
+        if note:
+            path = review.findings_dir / f"{fid}.md"
+            text = review.read_file(path) or ""
+            review.write_file(path, f"{text.rstrip()}\n\n## Verification by {args.verifier}: {args.verdict}\n\n{note}")
+        if args.verifier == f.get("reviewer"):
+            raise Refused(f"{args.verifier} reported {fid}; a verifier is never the sole verifier of its own finding")
+        f["verifications"].append({"verifier": args.verifier, "verdict": args.verdict, "at": now()})
+        if args.severity:
+            f["severity"] = args.severity
+        verdicts = {v["verdict"] for v in f["verifications"]}
+        f["status"] = next(iter(verdicts)) if len(verdicts) == 1 else "disputed"
+        verifiers = {v["verifier"] for v in f["verifications"]}
+        review.append_log({"type": "verification", "id": fid, "verifier": args.verifier, "verdict": args.verdict,
+                           "status": f["status"]})
+        print(f"{fid}: {f['status']}" + ("  (needs a second verifier)" if needs_second(f) and len(verifiers) < 2 else ""))
+        before = f["refreshes"][-1]["status"] if f.get("refreshes") else None
+        if before == "awaiting_decision" and len(f["verifications"]) == 1:
+            print(f"{fid} was awaiting_decision before the refresh; resolve it again if the decision is still open")
     review.save()
-    review.append_log({"type": "verification", "id": args.id, "verifier": args.verifier, "verdict": args.verdict,
-                       "status": f["status"]})
-    print(f"{args.id}: {f['status']}" + ("  (needs a second verifier)" if needs_second(f) and len(verifiers) < 2 else ""))
-    before = f["refreshes"][-1]["status"] if f.get("refreshes") else None
-    if before == "awaiting_decision" and len(f["verifications"]) == 1:
-        print(f"{args.id} was awaiting_decision before the refresh; resolve it again if the decision is still open")
 
 
 def cmd_resolve(review: Review, args) -> None:
-    f = review.finding(args.id)
-    if args.status == "duplicate":
-        if not args.duplicate_of:
-            raise Refused("duplicate needs --duplicate-of")
-        review.finding(args.duplicate_of)
-        f["duplicate_of"] = args.duplicate_of
-    previous = f["status"]
-    f["status"] = args.status
-    f["resolution"] = args.reason
+    if args.status == "duplicate" and not args.duplicate_of:
+        raise Refused("duplicate needs --duplicate-of")
+    for fid in args.ids:
+        f = review.finding(fid)
+        if args.status == "duplicate":
+            if args.duplicate_of == fid:
+                raise Refused(f"{fid} cannot be a duplicate of itself")
+            review.finding(args.duplicate_of)
+            f["duplicate_of"] = args.duplicate_of
+        previous = f["status"]
+        f["status"] = args.status
+        f["resolution"] = args.reason
+        review.append_log({"type": "finding", "id": fid, "status": args.status, "from": previous, "reason": args.reason})
+        print(f"{fid}: {previous} -> {args.status}")
     review.save()
-    review.append_log({"type": "finding", "id": args.id, "status": args.status, "from": previous, "reason": args.reason})
-    print(f"{args.id}: {previous} -> {args.status}")
 
 
 def finding_line(fid: str, f: dict) -> str:
@@ -756,6 +1145,15 @@ def cmd_coverage(review: Review, args) -> None:
     for key, cell in s["cells"].items():
         if cell["status"] == "omitted":
             print(f"omitted {key}: {cell.get('reason')}")
+    for key, cell in s["cells"].items():
+        by_reason: dict[str, list[str]] = {}
+        for path, reason in (cell.get("skipped") or {}).items():
+            by_reason.setdefault(reason, []).append(path)
+        for reason, paths in by_reason.items():
+            print(f"skipped {key} ({len(paths)} files, {reason}): {', '.join(paths)}")
+    for key, cell in s["cells"].items():
+        if cell.get("impact_unchecked"):
+            print(f"impact not checked {key} (a limitation, not a gap): {', '.join(cell['impact_unchecked'])}")
     for cid, chunk in s["chunks"].items():
         if chunk.get("treatment") == "excluded":
             print(f"excluded {cid} ({len(chunk.get('files', []))} files): {chunk.get('reason')}")
@@ -835,6 +1233,10 @@ def cmd_refresh(review: Review, args) -> None:
         cell.update({"status": "partial", "unchecked": sorted(set(cell.get("unchecked", [])) | set(files)),
                      "reason": reason})
     for cell in s["cells"].values():
+        if cell.get("skipped"):  # a skip judged the old content; a changed or removed file is judged again
+            cell["skipped"] = {p: r for p, r in cell["skipped"].items() if p not in touched}
+            if not cell["skipped"]:
+                del cell["skipped"]
         if cell.get("unchecked"):
             cell["unchecked"] = [u for u in cell["unchecked"] if u not in removed]
             if cell["status"] == "partial" and not cell["unchecked"]:
@@ -872,7 +1274,8 @@ def cmd_refresh(review: Review, args) -> None:
 def update_shas(review: Review) -> None:
     rev = review.state["revision"]
     if rev.get("repo"):
-        rev["base_sha"] = resolve_sha(rev["repo"], rev["base"]) or rev.get("base_sha")
+        if rev.get("base"):
+            rev["base_sha"] = resolve_sha(rev["repo"], rev["base"]) or rev.get("base_sha")
         rev["head_sha"] = resolve_sha(rev["repo"], rev["head"]) or rev.get("head_sha")
 
 
@@ -889,11 +1292,15 @@ def moved_revisions(rev: dict) -> list[str]:
 def cmd_status(review: Review, args) -> None:
     s = review.state
     rev = s["revision"]
-    print(f"scope: {s['scope']}  base {rev['base']} head {rev['head']}" + ("  + working tree" if rev["working_tree"] else ""))
+    if rev.get("audit"):
+        print(f"scope: {s['scope']}  audit of {' '.join(rev['audit'])} at {'the working tree' if rev['working_tree'] else rev['head']}")
+    else:
+        print(f"scope: {s['scope']}  base {rev['base']} head {rev['head']}" + ("  + working tree" if rev["working_tree"] else ""))
     for line in moved_revisions(rev):
         print(f"changed: {line}; write the current diff and run refresh")
     if rev["working_tree"]:
-        print("working tree: changes since diff.patch show only in refresh with the current diff")
+        print("working tree: changes since diff.patch show only in refresh with the current diff"
+              + (" (audit-diff writes it)" if rev.get("audit") else ""))
     approval = s.get("approval")
     print(f"approval: {approval['coverage'] if approval else 'none'}; wave size {s['wave_size']}; "
           f"waves started {len(s['waves'])}, still needed {review.waves_needed()}")
@@ -954,18 +1361,36 @@ def cmd_log(review: Review, args) -> None:
     print("logged " + json.dumps(record, ensure_ascii=False))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+class UsageError(Exception):
+    """Wrong usage of one command inside a batch."""
+
+
+class Parser(argparse.ArgumentParser):
+    raise_errors = False  # inside a batch a wrong line is refused instead of ending the process
+
+    def error(self, message):
+        if Parser.raise_errors:
+            raise UsageError(message)
+        super().error(message)
+
+
+def build_parser() -> Parser:
+    parser = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("review_dir", type=Path)
+    parser.add_argument("--as", dest="actor", metavar="ID",
+                        help="a reviewer or verifier recording its own results; limited to its cells and findings")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init")
     p.add_argument("--scope", required=True)
-    p.add_argument("--base", required=True)
-    p.add_argument("--head", required=True)
+    p.add_argument("--base", help="the base of a change; not with --audit")
+    p.add_argument("--head", default="HEAD")
+    p.add_argument("--audit", nargs="+", metavar="PATTERN", help="review the whole files these patterns match")
     p.add_argument("--working-tree", action="store_true")
     p.add_argument("--wave-size", type=int, default=DEFAULT_WAVE_SIZE)
     p.add_argument("--single", action="store_true", help="one chunk with the whole diff.patch, cells per group")
     p.add_argument("--groups", nargs="+", default=[], help='with --single: G1="Perspective;Perspective"')
+    p = sub.add_parser("audit-diff")
+    p.add_argument("file", type=Path, help="where to write the current whole files of the audit")
     p = sub.add_parser("triage")
     p.add_argument("--chunk-lines", type=int, default=DEFAULT_CHUNK_LINES)
     p.add_argument("--out", type=Path)
@@ -973,7 +1398,7 @@ def main() -> None:
     p.add_argument("file", type=Path)
     p = sub.add_parser("chunk")
     p.add_argument("id")
-    p.add_argument("--title", required=True)
+    p.add_argument("--title", help="required for a new chunk")
     p.add_argument("--files", nargs="*")
     p.add_argument("--risk", choices=RISKS, help="medium for a new chunk; kept when omitted")
     p.add_argument("--treatment", choices=TREATMENTS, help="full for a new chunk; kept when omitted")
@@ -987,9 +1412,10 @@ def main() -> None:
     p.add_argument("chunk")
     p.add_argument("groups", nargs="+")
     p = sub.add_parser("omit")
-    p.add_argument("chunk")
-    p.add_argument("group")
+    p.add_argument("chunks", nargs="+")
+    p.add_argument("--groups", nargs="+", required=True)
     p.add_argument("--reason", required=True)
+    sub.add_parser("overview")
     sub.add_parser("estimate")
     p = sub.add_parser("approve")
     p.add_argument("--coverage", choices=("full", "risk_first"), required=True)
@@ -1000,9 +1426,14 @@ def main() -> None:
     p.add_argument("--owner", required=True, help="reviewer ID, e.g. R3")
     p.add_argument("cells", nargs="+")
     p = sub.add_parser("set")
-    p.add_argument("cell")
+    p.add_argument("cells", nargs="+")
     p.add_argument("status", choices=CELL_STATUSES)
     p.add_argument("--unchecked", nargs="+")
+    p.add_argument("--skipped", nargs="+", metavar="PATTERN=REASON",
+                   help="files of the chunk not relevant to the cell's perspectives, with the reason")
+    p.add_argument("--impact", nargs="+", help="files outside the chunk the change affects, checked by the reviewer")
+    p.add_argument("--impact-unchecked", nargs="+",
+                   help="files outside the chunk the reviewer knows the change affects but did not check")
     p.add_argument("--reason")
     p = sub.add_parser("finding")
     p.add_argument("id")
@@ -1013,13 +1444,15 @@ def main() -> None:
     p.add_argument("--files", nargs="+", help="files of the finding's location; refresh marks it stale by them")
     p.add_argument("--outside", action="store_true", help="an existing problem outside the change")
     p.add_argument("--reviewer", help="defaults to the owner of the cell")
+    p.add_argument("--body", help="the full finding, written to findings/ID.md; - reads the standard input")
     p = sub.add_parser("verify")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+")
     p.add_argument("verdict", choices=VERDICTS)
-    p.add_argument("--verifier", required=True)
+    p.add_argument("--verifier", help="the verifier's ID; with --as that ID")
+    p.add_argument("--note", help="the evidence, appended to findings/ID.md; - reads the standard input")
     p.add_argument("--severity", choices=SEVERITIES)
     p = sub.add_parser("resolve")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+")
     p.add_argument("status", choices=FINDING_STATUSES)
     p.add_argument("--reason", required=True)
     p.add_argument("--duplicate-of")
@@ -1036,20 +1469,102 @@ def main() -> None:
     p = sub.add_parser("log")
     p.add_argument("type", choices=list(LOG_REQUIRED))
     p.add_argument("fields", nargs="*", type=log_field, help="key=value; values are parsed as JSON when possible")
+    p = sub.add_parser("batch")
+    p.add_argument("file", help="a file of commands, one per line, or - for the standard input")
+    return parser
+
+
+COMMANDS = {
+    "init": cmd_init, "audit-diff": cmd_audit_diff, "triage": cmd_triage, "chunks": cmd_chunks, "chunk": cmd_chunk,
+    "group": cmd_group, "cell": cmd_cell, "omit": cmd_omit, "overview": cmd_overview, "estimate": cmd_estimate,
+    "approve": cmd_approve, "next": cmd_next, "start": cmd_start, "set": cmd_set, "finding": cmd_finding,
+    "verify": cmd_verify, "resolve": cmd_resolve, "findings": cmd_findings, "coverage": cmd_coverage,
+    "refresh": cmd_refresh, "status": cmd_status, "validate": cmd_validate, "log": cmd_log,
+}
+BATCH_COMMANDS = ("chunks", "chunk", "group", "cell", "omit", "approve", "start", "set", "finding", "verify",
+                  "resolve", "log")
+
+
+def batch_items(line: str) -> list[str]:
+    """One batch line: shell-like arguments, or a JSON array of them."""
+    if line.startswith("["):
+        items = json.loads(line)
+        if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
+            raise ValueError("a JSON line must be an array of strings")
+        return items
+    return shlex.split(line)
+
+
+def cmd_batch(review: Review, args) -> None:
+    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+    output = io.StringIO()  # printed only when the whole batch is applied
+    review.in_batch = True
+    try:
+        with contextlib.redirect_stdout(output):
+            count = run_batch(review, args, text)
+    finally:
+        review.in_batch = False
+    print(output.getvalue() + f"batch: {count} commands applied")
+
+
+def run_batch(review: Review, args, text: str) -> int:
+    parser, count = build_parser(), 0
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        Parser.raise_errors = True
+        try:
+            ns = parser.parse_args([str(args.review_dir), *batch_items(line)])
+        except (ValueError, UsageError) as e:
+            raise Refused(f"line {n}: {e}; nothing was written")
+        except SystemExit:
+            raise Refused(f"line {n}: wrong usage; nothing was written")
+        finally:
+            Parser.raise_errors = False
+        if ns.command not in BATCH_COMMANDS:
+            raise Refused(f"line {n}: {ns.command} is not allowed in a batch; nothing was written")
+        if ns.actor not in (None, args.actor):
+            raise Refused(f"line {n}: --as is given once for the whole batch; nothing was written")
+        ns.actor = args.actor
+        check_actor(ns)
+        try:
+            COMMANDS[ns.command](review, ns)
+        except Refused as e:
+            raise Refused(f"line {n}: {e}; nothing was written")
+        count += 1
+    return count
+
+
+COMMANDS["batch"] = cmd_batch
+# What a subagent may run with --as: its own findings, coverage and verifications, and the read-only views.
+ACTOR_COMMANDS = ("finding", "set", "verify", "log", "batch", "next", "findings", "coverage", "overview", "status",
+                  "estimate", "validate")
+
+
+def check_actor(args) -> None:
+    if args.actor and args.command not in ACTOR_COMMANDS:
+        raise Refused(f"{args.command} is the orchestrator's; with --as only {', '.join(ACTOR_COMMANDS)}")
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+    if args.command == "init" and not (args.base or args.audit):
+        parser.error("init needs --base REF, or --audit PATTERN … for whole files")
+    if args.command == "init" and args.base and args.audit:
+        parser.error("init takes --base for a change or --audit for whole files, not both")
 
     review = Review(args.review_dir)
     if args.command != "init" and not review.state_path.exists():
         parser.error(f"{args.review_dir} is not a review folder (missing review.json; run init)")
-    commands = {
-        "init": cmd_init, "triage": cmd_triage, "chunks": cmd_chunks, "chunk": cmd_chunk, "group": cmd_group,
-        "cell": cmd_cell, "omit": cmd_omit, "estimate": cmd_estimate, "approve": cmd_approve, "next": cmd_next,
-        "start": cmd_start, "set": cmd_set, "finding": cmd_finding, "verify": cmd_verify, "resolve": cmd_resolve,
-        "findings": cmd_findings, "coverage": cmd_coverage, "refresh": cmd_refresh, "status": cmd_status,
-        "validate": cmd_validate, "log": cmd_log,
-    }
+    review.actor = args.actor
     try:
-        commands[args.command](review, args)
+        check_actor(args)
+        if args.command == "init":
+            review.root.mkdir(parents=True, exist_ok=True)
+        with review.locked(), review.transaction():
+            COMMANDS[args.command](review, args)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         raise SystemExit(1)

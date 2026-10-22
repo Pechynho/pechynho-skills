@@ -1,0 +1,3 @@
+model: opus
+disallowedTools: Edit, Write, NotebookEdit
+color: orange

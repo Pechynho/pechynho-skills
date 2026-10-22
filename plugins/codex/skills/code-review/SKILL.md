@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Reviews the working tree, a branch or selected commits with perspective-based review subagents, independent verification and a synthesis. Use on a request for code review; it clarifies the scope, raises business questions and can hand fixes to programming.
+description: Reviews the working tree, a branch, selected commits, an area or the whole project with perspective-based review subagents, independent verification and a synthesis. Use on a request for code review; it clarifies the scope, raises business questions and can hand fixes to programming.
 ---
 
 # Code review
@@ -26,6 +26,12 @@ with the question tool. Ask together about the unclear scope and the expected ou
   history, and confirm an unclear base branch with the user instead of assuming `main` or upstream.
 - **Commits:** a concrete range or selection. Clarify the endpoints and whether to review the resulting
   diff or each commit. Do not include uncommitted changes without support in the assignment.
+- **Area or whole project (audit):** no change defines the scope; the reviewed code is whole files.
+  Git cannot tell which files make up an area such as payments. One explorer run maps it: its entry
+  points (routes, controllers, commands, consumers), services, entities and tables, templates,
+  configuration and tests, and where the area ends. Present the files as path patterns with the
+  boundary and what was left out; the user confirms them, as what belongs to the area is their decision.
+  A whole project is almost always a [large review](references/large-reviews.md).
 - **Output:** present the review only, or incorporate the verified findings via `programming`.
   Existing permissions apply; do not ask about the same thing again before fixes.
 
@@ -33,15 +39,17 @@ Until the scope is clear you may map the repository, but do not start reviewing 
 An unclear fix mode does not block reading code; resolve it before writing.
 
 Record the exact refs and SHAs, the file list and whether the working tree is included. For a branch
-review diff from `git merge-base <base> HEAD`. For the working tree capture the reviewed form of the
-files or their hashes so that everyone reads the same state; a snapshot does not require a commit,
+review diff from `git merge-base <base> HEAD`. For an audit `init --audit` writes the diff itself from
+the confirmed patterns, every file as a new file, so the steps below apply unchanged; in an audit
+"outside the change" means outside the confirmed area. For the working tree capture the reviewed form of
+the files or their hashes so that everyone reads the same state; a snapshot does not require a commit,
 stash or branch change. Write the reviewed diff once into the
 [work directory](shared/project-context.md#work-directory), for example
 `{work_dir}/review/{scope}/diff.patch`, and pass its path to the reviewers and verifiers; they read the
-same diff instead of each computing it. If the reviewed code changes during the review, write the
-fresh diff the same way into another file and run `refresh`: the reopened cells go to reviewers again
-for the changed files and the stale findings to new verifications. Fixes made in step 6 need no
-refresh; step 6 verifies them.
+same diff instead of each computing it. If the reviewed code changes during the review, write the fresh
+diff the same way into another file (`audit-diff` in an audit) and run `refresh`: the reopened cells go
+to reviewers again for the changed files and the stale findings to new verifications. Fixes made in step
+6 need no refresh; step 6 verifies them.
 
 Track the review in the same folder with the [review tool](shared/review-tool.md). A diff a reviewer
 covers in one run is one chunk: `init --single` with the perspective groups of step 2. When a reviewer
@@ -85,19 +93,30 @@ Without X, the wave size is [`parallel_runs`](shared/project-context.md#parallel
 One reviewer may take several related perspectives; the number of perspectives is neither the number
 of agents nor a required number of findings. Verification and synthesis are later phases, not a
 requirement to run everything at once.
-Model choice and the case of unavailable subagents follow [delegation](shared/delegation.md).
+Model choice and the case of unavailable subagents follow [delegation](shared/delegation.md);
+reviewers and verifiers run as the reviewer agent of the collection, the synthesis as the analyst.
 
 Give every reviewer:
 
 - the exact scope, the reviewed revision and its perspectives;
+- the files of its cells, the core it has to cover, and in a review of several chunks the `overview`
+  of the others;
 - the user's assignment, known decisions and relevant plans;
 - the [ground rules](shared/ground-rules.md) and the concrete paths of the project rule files relevant
   to the change, selected by you per [project context](shared/project-context.md#project-instructions);
   the reviewer reads those files, not the indexes;
 - the common findings format and the ban on fixing during the review;
-- how to hand over findings, questions, coverage and limitations.
+- the command line of the [review tool](shared/review-tool.md) with the review folder and its ID
+  (`--as R3`), with which it records its own results, and what it returns to you.
 
-A reviewer also reads the surrounding code and callers needed to judge the impact. It reports every bug
+A reviewer covers the core, the files of its cells, first, then the impact outside it by its own
+judgment: a bug may show in a file the change did not touch. It looks for what the change affects
+(callers of a changed signature, users of a changed route, event, schema, configuration key, template
+variable or shared type), with search or the language server, reads them where they use the change and
+stops where its run ends. A purely added or internal change needs no search. In an audit the impact is
+the code outside the area that the area calls or that calls it. Users you already know go into the
+brief as a hint, not a limit. The project's static analysis or type check over the whole project often
+finds broken users more cheaply; the reviewer requests it from the main agent. It reports every bug
 it finds, also in old code or outside the reviewed feature, marked as an existing problem outside the
 change rather than a regression, and passes it to the same verification. The diff defines the mandatory
 coverage, not a filter on reported bugs. A reviewer is not obliged to find something and does not report
@@ -105,9 +124,24 @@ preferences without a concrete benefit. Reviewers check by reading; requests for
 static analysis, tests or builds go to the main agent per the
 [ground rules](shared/ground-rules.md#verification).
 
-Keep stable finding IDs and traceable decisions. When a reviewer returns, write each finding verbatim
-into `findings/{ID}.md`, index it with `finding` and the files of its location and record the cell's
-coverage with `set`; reviewers stay read-only, the orchestrator keeps the record.
+A reviewer accounts for every file of its core: the files it skipped as not relevant to its
+perspectives, each with a reason (a template without logic in a data-consistency group), and the files
+or sections it did not check. Every other file counts as reviewed. For the impact it names the files it
+checked and those it found but did not check; these are a limitation of the result, not a gap in the
+coverage, and you decide whether they need a follow-up.
+
+Keep stable finding IDs and traceable decisions. A reviewer records its own results, so that the
+findings do not pass through your context: before it ends, it sends one `batch` with `--as` and its ID
+(see [several records in one call](shared/tool-batches.md)) holding each finding with its full text in
+`--body` and the files of its location, then the coverage of its cells with `set`, the skipped files
+with `--skipped` and the impact with `--impact` and `--impact-unchecked`. The tool lets it record only
+into the cells you started for it. It returns a short summary: the finding IDs with their severity and
+title, the status of its cells, business questions, the requests for checks and the contracts or links
+that matter to other chunks. Check the record with `status` and the finding index; a cell still
+`running` means the run did not record and needs a new run or your record from its output. Reviewers
+change nothing in the project; the review folder is working material, not part of it. When a reviewer cannot run the tool
+(no Python, a subagent without the review tool or a read-only sandbox), it returns the full findings and
+coverage, and you record them in one `batch` the same way, the text in `--body`.
 
 ## 3. Resolve new business questions
 
@@ -119,13 +153,17 @@ that depend on an answer wait. Elapsed time is not a decision.
 ## 4. Independent verification
 
 The number of verifiers follows the [number of runs](shared/delegation.md#number-of-runs) over the
-findings: a verifier run takes the findings that share code or a cause, typically about four, fewer
-when they are hard or critical; they run in the same slots as the reviewers. A large review verifies
+findings: a verifier run takes as many findings as it can trace thoroughly in
+[one run](shared/delegation.md#one-assignment-per-run), not a fixed count. Put findings that share code
+or a cause together, so that the code is read once: several simple findings in one file fit one run,
+a hard or critical finding that needs a long trace may take a run of its own. The runs use the same
+slots as the reviewers. A large review verifies
 each wave's findings as they arrive. With no findings skip the verification phase. Do not invent
 findings to give verifiers work. Every finding has a primary verifier; a critical or disputed finding
 is also checked by a second one. A verifier is never the sole verifier of its own finding.
 
-Give the verifiers the exact assignment, code, rules, user decisions, evidence and proposed fixes.
+Give the verifiers the exact assignment, code, rules, user decisions, evidence and proposed fixes, as
+the paths of the finding files, and the command line of the review tool with their ID.
 A verifier independently traces the behavior in the sources. When it needs a targeted check, it hands
 the request to the main agent with its interim conclusion and ends; the main agent runs the check and
 briefs a new short verifier run with the result per
@@ -135,8 +173,10 @@ does not change undecided product behavior.
 
 Each finding gets **confirmed**, **refuted** or **undecidable** with evidence and reasoning. Lack of
 information is not a refutation. Resolve a disagreement between verifiers with evidence or leave it
-explicitly open; a business decision goes to the user. Append each verification to the finding's file
-and record it with `verify`; a resolved dispute, a pending decision or a merge with `resolve`.
+explicitly open; a business decision goes to the user. The verifier records each verdict
+itself with `verify --as V2 … --note`, which appends its evidence to the finding's file, and returns
+the IDs with their verdicts and open questions; without the tool it returns them in full and you record
+them the same way. You record a resolved dispute, a pending decision or a merge with `resolve`.
 
 ## 5. Synthesis by one subagent
 

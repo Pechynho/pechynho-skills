@@ -12,6 +12,8 @@ Run `triage` on the written diff and correct the proposal before loading it:
 
 - Keep files that change together in one chunk: a module with its tests, a migration with the code that
   uses it, a template with its controller. Directory grouping is only the starting point.
+- The line budget of `triage` counts changed lines, in an audit whole files. It is a starting point,
+  not the size of a run.
 - Set the risk of every chunk; security, money, data consistency, migrations and shared contracts are
   high.
 - `full` is the normal review. `light` suits lockfiles, vendored and generated code, build output and
@@ -19,12 +21,12 @@ Run `triage` on the written diff and correct the proposal before loading it:
   hidden in them and that a rename has no content change. `excluded` needs a reason and the user's
   consent in the approval below; it is listed as unreviewed in the result.
 
-## 2. Map of the change
+## 2. Orientation
 
-Before the first wave one explorer run builds a short map of the change: the modules, the changed
-public contracts (APIs, schemas, events, configuration, shared types) and who uses them. Save it as
-`map.md` in the review folder. Every reviewer gets the map with its cells, so that it can judge the
-impact beyond its chunk without reading the whole diff.
+No run maps the change in advance; for a huge diff it would not fit one run, and each reviewer finds
+the impact of its own chunk. Every reviewer gets the `overview` of the chunks with its cells, so that it
+can name a link to another chunk without reading its diff. What the reviewers learn about contracts and
+links goes into `waves.md` (see [waves](#5-waves)), which the integration cells and the synthesis read.
 
 ## 3. Cells
 
@@ -33,8 +35,8 @@ and use the same groups for all chunks, so that findings stay comparable. Assign
 each chunk and `omit` the others with a reason; no relevant area may disappear in any chunk.
 
 Some perspectives cannot be judged inside one chunk. Give them cells of an `--integration` chunk that
-runs after the local cells, works from the map and the wave summaries and reads code only where a link
-needs it:
+runs after the local cells, works from `waves.md`, the `overview` and the impact the reviewers recorded,
+and reads code only where a link needs it:
 
 | Perspective | Inside a chunk | In the integration cells |
 |---|---|---|
@@ -61,17 +63,17 @@ A wave is up to the wave size of parallel reviewer runs (the user's X, otherwise
 the cells from `next` that belong together, usually several groups of one chunk or one group of a few
 small chunks, recorded with `start`. Give it the brief of a reviewer from the
 [skill](../SKILL.md#2-split-the-perspectives-among-review-subagents) narrowed to its chunk files, plus
-the map.
+the `overview`.
 
 When a run returns:
 
-1. Write each finding verbatim into `findings/{ID}.md` and index it with `finding` and the files of
-   its location. From then on work with the index and the files, not with the returned text.
-2. Record the coverage with `set`: `covered`, or `partial` with the concrete unchecked files or
-   sections, which `next` offers as a follow-up first.
-3. Add a few lines to `waves.md` in the review folder: what the run found about contracts and links to
+1. The run has recorded its findings and the coverage of its cells itself per the
+   [skill](../SKILL.md#2-split-the-perspectives-among-review-subagents); check it with `status`. From
+   then on work with the index and the finding files, not with returned text. A `partial` cell lists
+   the unchecked files or sections, which `next` offers as a follow-up first.
+2. Add a few lines to `waves.md` in the review folder: what the run found about contracts and links to
    other chunks. The integration cells and the synthesis read it.
-4. Start the next ready cells in the freed slots and brief verifiers for the new findings at the same
+3. Start the next ready cells in the freed slots and brief verifiers for the new findings at the same
    time; verification does not wait for the end of all waves. The verifier runs follow the
    [verification rules](../SKILL.md#4-independent-verification) per batch of new findings.
 

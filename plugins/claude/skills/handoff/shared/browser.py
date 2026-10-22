@@ -11,13 +11,13 @@ Usage:
     browser.py DIR scenarios FILE                          add or update scenarios from a JSON list
     browser.py DIR ready ID [ID ...]                       the author confirms a script after running it
     browser.py DIR run [ID ...] [--group G] [--todo|--failed|--all] [--repeat N] [--wait SEC]
-    browser.py DIR result ID                               compact view of the last run of a scenario
-    browser.py DIR triage ID app|script|env|flaky [--finding F] [--note N]
-    browser.py DIR set ID pending|blocked|unverified --reason R
+    browser.py DIR result [ID ...] [--group G] [--failed]  compact view of the last run of scenarios
+    browser.py DIR triage ID [ID ...] app|script|env|flaky [--finding F] [--note N]
+    browser.py DIR set ID [ID ...] pending|blocked|unverified --reason R
     browser.py DIR shots [ID ...] [--group G] [--pending]  screenshots with layout hints and diffs
-    browser.py DIR judge ID ok|issue [--shots KEY ...] [--finding F] [--note N]
+    browser.py DIR judge ID [ID ...] ok|issue [--shots KEY ...] [--finding F] [--note N]
     browser.py DIR finding ID --scenarios S [S ...] --kind K --title T [--severity S]
-    browser.py DIR resolve ID STATUS --reason R [--duplicate-of ID]
+    browser.py DIR resolve ID [ID ...] STATUS --reason R [--duplicate-of ID]
     browser.py DIR findings [--all]
     browser.py DIR assign --owner O --task T [ID ...] [--group G]
     browser.py DIR release OWNER [--lost]
@@ -25,6 +25,7 @@ Usage:
     browser.py DIR status                                  derived overview, the entry point on resume
     browser.py DIR validate
     browser.py DIR log TYPE key=value ...                  append a record (check, decision, note, explore, data)
+    browser.py DIR batch FILE|-                            several changes from a file or stdin, all or nothing
 
 The format is described in shared/browser-tool.md. Python 3.8+, standard library only; the scenario
 scripts need Node 18+ and Playwright. Exit code 0 on success, 1 on a validation error or a refused
@@ -35,9 +36,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -46,7 +49,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,6 +79,8 @@ DEFAULT_TIMEOUT = 180
 DEFAULT_DIFF_THRESHOLD = 0.0
 DEFAULT_DIFF_TOLERANCE = 24
 ID_RE = re.compile(r"^[A-Za-z][\w.-]*$")
+BATCH_COMMANDS = ("config", "scenario", "ready", "triage", "set", "judge", "finding", "resolve", "assign",
+                  "release", "log")
 
 
 class Refused(Exception):
@@ -191,6 +196,7 @@ class Testing:
         self.results_dir = self.root / "results"
         self.state: dict = {}
         self._thread_lock = threading.RLock()
+        self._tx: dict | None = None
 
     @contextmanager
     def locked(self):
@@ -205,18 +211,43 @@ class Testing:
                 if fcntl:
                     fcntl.flock(handle, fcntl.LOCK_UN)
 
+    @contextmanager
+    def transaction(self):
+        """Keep save() and the log records in memory and write them together at the end, or nothing on an
+        exception. Only for one command or batch in a locked() section; a run saves at once."""
+        if self._tx is not None:
+            yield
+            return
+        self._tx = tx = {"dirty": False, "log": []}
+        try:
+            yield
+        finally:
+            self._tx = None
+        if tx["dirty"]:
+            write_json(self.state_path, self.state)
+        if tx["log"]:
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in tx["log"])
+
     def save(self) -> None:
         self.state["updated_at"] = now()
+        if self._tx is not None:
+            self._tx["dirty"] = True
+            return
         write_json(self.state_path, self.state)
 
     def append_log(self, record: dict) -> None:
         record = {"at": now(), **record}
+        if self._tx is not None:
+            self._tx["log"].append(record)
+            return
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def log(self) -> list[dict]:
+        pending = list(self._tx["log"]) if self._tx is not None else []
         if not self.log_path.exists():
-            return []
+            return pending
         records = []
         for n, line in enumerate(self.log_path.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
@@ -224,7 +255,7 @@ class Testing:
                     records.append(json.loads(line))
                 except json.JSONDecodeError as e:
                     raise Refused(f"{self.log_path}:{n}: invalid JSON: {e}")
-        return records
+        return records + pending
 
     def scenario(self, sid: str) -> dict:
         if sid not in self.state["scenarios"]:
@@ -381,6 +412,28 @@ def validate(t: Testing) -> tuple[list[str], list[str]]:
 
 
 # --- commands ---------------------------------------------------------------------------------
+
+
+def each(ids: list[str], action) -> None:
+    """Apply an action to every ID in order; a refusal names the ID when there are several. The caller's
+    transaction makes it all or nothing."""
+    ids = list(dict.fromkeys(ids))
+    for item in ids:
+        try:
+            action(item)
+        except Refused as e:
+            named = len(ids) == 1 or re.match(rf"{re.escape(item)}\b", str(e))
+            raise Refused(str(e) if named else f"{item}: {e}") from None
+
+
+def link_finding(t: Testing, fid: str | None, sid: str) -> None:
+    if fid:
+        f = t.finding(fid)
+        sc = t.scenario(sid)
+        if sid not in f["scenarios"]:
+            f["scenarios"].append(sid)
+        if fid not in sc["findings"]:
+            sc["findings"].append(fid)
 
 
 def check_limits(config: dict) -> None:
@@ -867,9 +920,27 @@ def cmd_run(t: Testing, args) -> None:
 
 
 def cmd_result(t: Testing, args) -> None:
-    sc = t.scenario(args.id)
+    ids = list(args.ids) + (t.ids(args.group) if args.group else [])
+    if args.failed:
+        ids += [sid for sid in t.ids() if t.state["scenarios"][sid]["outcome"] in ("failing", "failed", "flaky")]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        if args.failed:
+            print("no failing, failed or flaky scenario")
+            return
+        raise Refused("name scenarios, a --group or --failed")
+    for sid in ids:
+        t.scenario(sid)
+    for n, sid in enumerate(ids):
+        if n:
+            print()
+        show_result(t, sid)
+
+
+def show_result(t: Testing, sid: str) -> None:
+    sc = t.scenario(sid)
     run = sc.get("last_run")
-    print(f"{args.id} {sc['title']} [{sc['group']}, {sc['kind']}] outcome={sc['outcome']} script={t.script_status(sc)}")
+    print(f"{sid} {sc['title']} [{sc['group']}, {sc['kind']}] outcome={sc['outcome']} script={t.script_status(sc)}")
     if not run:
         print("  not run yet")
         return
@@ -905,40 +976,45 @@ def cmd_result(t: Testing, args) -> None:
 
 
 def cmd_triage(t: Testing, args) -> None:
-    sc = t.scenario(args.id)
-    if sc["outcome"] not in ("failing", "failed", "flaky", "blocked"):
-        raise Refused(f"{args.id} is {sc['outcome']}; triage is for a failing run")
     if args.cause in ("env", "flaky") and not args.note:
         raise Refused(f"triage {args.cause} needs --note with the evidence")
-    if args.finding:
-        f = t.finding(args.finding)
-        if args.id not in f["scenarios"]:
-            f["scenarios"].append(args.id)
-        if args.finding not in sc["findings"]:
-            sc["findings"].append(args.finding)
-    sc["triage"] = {"cause": args.cause, "note": args.note, "run": (sc.get("last_run") or {}).get("run")}
-    if args.cause == "app":
-        sc["outcome"], sc["reason"] = "failed", args.note
-    elif args.cause == "env":
-        sc["outcome"], sc["reason"] = "blocked", args.note
-    elif args.cause == "flaky":
-        sc["outcome"], sc["reason"] = "flaky", args.note
-    else:
-        sc["outcome"], sc["reason"], sc["ready_hash"] = "pending", None, None
-    t.save()
-    t.append_log({"type": "triage", "scenario": args.id, "cause": args.cause, "note": args.note,
-                  "finding": args.finding})
     hint = {"app": "record the finding if not done", "env": "fix the environment and run again",
             "flaky": "keep the finding or note with the conditions", "script": "fix the script, run it and mark it ready"}
-    print(f"{args.id}: {sc['outcome']} ({args.cause}); {hint[args.cause]}")
+
+    def triage(sid: str) -> None:
+        sc = t.scenario(sid)
+        if sc["outcome"] not in ("failing", "failed", "flaky", "blocked"):
+            raise Refused(f"{sid} is {sc['outcome']}; triage is for a failing run")
+        link_finding(t, args.finding, sid)
+        sc["triage"] = {"cause": args.cause, "note": args.note, "run": (sc.get("last_run") or {}).get("run")}
+        if args.cause == "app":
+            sc["outcome"], sc["reason"] = "failed", args.note
+        elif args.cause == "env":
+            sc["outcome"], sc["reason"] = "blocked", args.note
+        elif args.cause == "flaky":
+            sc["outcome"], sc["reason"] = "flaky", args.note
+        else:
+            sc["outcome"], sc["reason"], sc["ready_hash"] = "pending", None, None
+        t.save()
+        t.append_log({"type": "triage", "scenario": sid, "cause": args.cause, "note": args.note,
+                      "finding": args.finding})
+        print(f"{sid}: {sc['outcome']} ({args.cause}); {hint[args.cause]}")
+
+    each(args.ids, triage)
 
 
 def cmd_set(t: Testing, args) -> None:
-    sc = t.scenario(args.id)
-    sc["outcome"], sc["reason"] = args.outcome, args.reason
-    t.save()
-    t.append_log({"type": "set", "scenario": args.id, "outcome": args.outcome, "reason": args.reason})
-    print(f"{args.id}: {args.outcome}")
+    if args.outcome != "pending" and not args.reason:
+        raise Refused(f"set {args.outcome} needs --reason")
+
+    def set_outcome(sid: str) -> None:
+        sc = t.scenario(sid)
+        sc["outcome"], sc["reason"] = args.outcome, args.reason
+        t.save()
+        t.append_log({"type": "set", "scenario": sid, "outcome": args.outcome, "reason": args.reason})
+        print(f"{sid}: {args.outcome}")
+
+    each(args.ids, set_outcome)
 
 
 def shot_line(t: Testing, sid: str, key: str, shot: dict) -> str:
@@ -977,30 +1053,29 @@ def cmd_shots(t: Testing, args) -> None:
 
 
 def cmd_judge(t: Testing, args) -> None:
-    sc = t.scenario(args.id)
-    keys = args.shots or [k for k, s in sc["shots"].items() if s["judgment"] == "pending"]
-    if not keys:
-        raise Refused(f"{args.id}: no pending screenshots; name them with --shots")
-    for key in keys:
-        if key not in sc["shots"]:
-            raise Refused(f"{args.id}: unknown screenshot {key} (known: {', '.join(sc['shots'])})")
     if args.judgment == "issue" and not (args.finding or args.note):
         raise Refused("an issue needs --finding or --note")
-    if args.finding:
-        f = t.finding(args.finding)
-        if args.id not in f["scenarios"]:
-            f["scenarios"].append(args.id)
-        if args.finding not in sc["findings"]:
-            sc["findings"].append(args.finding)
-    for key in keys:
-        shot = sc["shots"][key]
-        shot.update(judgment=args.judgment, finding=args.finding, note=args.note, inherited=False,
-                    judged={"path": shot["path"], "run": shot["run"], "judgment": args.judgment,
-                            "finding": args.finding, "note": args.note})
-    t.save()
-    t.append_log({"type": "judge", "scenario": args.id, "shots": keys, "judgment": args.judgment,
-                  "finding": args.finding, "note": args.note})
-    print(f"{args.id}: {len(keys)} screenshot(s) {args.judgment}")
+
+    def judge(sid: str) -> None:
+        sc = t.scenario(sid)
+        keys = args.shots or [k for k, s in sc["shots"].items() if s["judgment"] == "pending"]
+        if not keys:
+            raise Refused(f"{sid}: no pending screenshots; name them with --shots")
+        for key in keys:
+            if key not in sc["shots"]:
+                raise Refused(f"{sid}: unknown screenshot {key} (known: {', '.join(sc['shots'])})")
+        link_finding(t, args.finding, sid)
+        for key in keys:
+            shot = sc["shots"][key]
+            shot.update(judgment=args.judgment, finding=args.finding, note=args.note, inherited=False,
+                        judged={"path": shot["path"], "run": shot["run"], "judgment": args.judgment,
+                                "finding": args.finding, "note": args.note})
+        t.save()
+        t.append_log({"type": "judge", "scenario": sid, "shots": keys, "judgment": args.judgment,
+                      "finding": args.finding, "note": args.note})
+        print(f"{sid}: {len(keys)} screenshot(s) {args.judgment}")
+
+    each(args.ids, judge)
 
 
 def cmd_finding(t: Testing, args) -> None:
@@ -1024,17 +1099,21 @@ def cmd_finding(t: Testing, args) -> None:
 
 
 def cmd_resolve(t: Testing, args) -> None:
-    f = t.finding(args.id)
-    if args.status == "duplicate":
-        if not args.duplicate_of:
-            raise Refused("duplicate needs --duplicate-of")
-        t.finding(args.duplicate_of)
-        f["duplicate_of"] = args.duplicate_of
-    f["history"].append({"at": now(), "from": f["status"], "to": args.status, "reason": args.reason})
-    f["status"] = args.status
-    t.save()
-    t.append_log({"type": "resolve", "finding": args.id, "status": args.status, "reason": args.reason})
-    print(f"{args.id}: {args.status}")
+    if args.status == "duplicate" and not args.duplicate_of:
+        raise Refused("duplicate needs --duplicate-of")
+
+    def resolve(fid: str) -> None:
+        f = t.finding(fid)
+        if args.status == "duplicate":
+            t.finding(args.duplicate_of)
+            f["duplicate_of"] = args.duplicate_of
+        f["history"].append({"at": now(), "from": f["status"], "to": args.status, "reason": args.reason})
+        f["status"] = args.status
+        t.save()
+        t.append_log({"type": "resolve", "finding": fid, "status": args.status, "reason": args.reason})
+        print(f"{fid}: {args.status}")
+
+    each(args.ids, resolve)
 
 
 def cmd_findings(t: Testing, args) -> None:
@@ -1208,6 +1287,66 @@ def cmd_log(t: Testing, args) -> None:
     print(f"logged {args.type}")
 
 
+def batch_lines(source: str) -> list[tuple[int, list[str]]]:
+    """The commands of a batch with their line numbers: shell-like arguments or a JSON array of strings."""
+    if source == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except OSError as e:
+            raise Refused(f"cannot read {source}: {e.strerror or e}")
+    commands = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            if line.startswith("["):
+                tokens = json.loads(line)
+                if not isinstance(tokens, list) or not all(isinstance(x, str) for x in tokens):
+                    raise ValueError("expected a JSON array of strings")
+            else:
+                tokens = shlex.split(line)
+        except ValueError as e:
+            raise Refused(f"line {n}: {e}")
+        commands.append((n, tokens))
+    return commands
+
+
+def parse_line(parser: argparse.ArgumentParser, folder: Path, n: int, tokens: list[str]):
+    """One batch line parsed like a command line; wrong usage becomes a refusal naming the line."""
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(out):
+            return parser.parse_args([str(folder), *tokens])
+    except SystemExit:
+        lines = out.getvalue().strip().splitlines()
+        raise Refused(f"line {n}: wrong usage: {lines[-1].split('error: ', 1)[-1] if lines else 'see --help'}")
+
+
+def cmd_batch(t: Testing, args, parser: argparse.ArgumentParser, commands: dict) -> None:
+    """The commands of a batch in one locked section and one transaction: all of them or nothing."""
+    out = io.StringIO()
+    try:
+        lines = batch_lines(args.source)
+        with t.locked(), t.transaction():
+            for n, tokens in lines:
+                line_args = parse_line(parser, args.testing_dir, n, tokens)
+                if line_args.command not in BATCH_COMMANDS:
+                    raise Refused(f"line {n}: {line_args.command} is not allowed in a batch "
+                                  f"(allowed: {', '.join(BATCH_COMMANDS)})")
+                try:
+                    with redirect_stdout(out):
+                        commands[line_args.command](t, line_args)
+                except Refused as e:
+                    raise Refused(f"line {n}: {e}") from None
+    except Refused as e:
+        raise Refused(f"{e}; nothing was written") from None
+    print(out.getvalue(), end="")
+    print(f"batch: {len(lines)} command{'' if len(lines) == 1 else 's'} applied")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("testing_dir", type=Path)
@@ -1261,14 +1400,16 @@ def main() -> None:
     p.add_argument("--wait", type=float, metavar="SEC",
                    help="give up after waiting SEC seconds for browsers held by other processes")
     p = sub.add_parser("result")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="*", metavar="ID")
+    p.add_argument("--group")
+    p.add_argument("--failed", action="store_true", help="the failing, failed and flaky scenarios")
     p = sub.add_parser("triage")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID")
     p.add_argument("cause", choices=CAUSES)
     p.add_argument("--finding")
     p.add_argument("--note")
     p = sub.add_parser("set")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID")
     p.add_argument("outcome", choices=("pending", "blocked", "unverified"))
     p.add_argument("--reason")
     p = sub.add_parser("shots")
@@ -1276,7 +1417,7 @@ def main() -> None:
     p.add_argument("--group")
     p.add_argument("--pending", action="store_true")
     p = sub.add_parser("judge")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID")
     p.add_argument("judgment", choices=("ok", "issue"))
     p.add_argument("--shots", nargs="+", help="screenshot keys NAME@VIEWPORT; all pending by default")
     p.add_argument("--finding")
@@ -1288,7 +1429,7 @@ def main() -> None:
     p.add_argument("--title", required=True)
     p.add_argument("--severity", choices=SEVERITIES)
     p = sub.add_parser("resolve")
-    p.add_argument("id")
+    p.add_argument("ids", nargs="+", metavar="ID")
     p.add_argument("status", choices=FINDING_STATUSES)
     p.add_argument("--reason", required=True)
     p.add_argument("--duplicate-of")
@@ -1309,13 +1450,13 @@ def main() -> None:
     p = sub.add_parser("log")
     p.add_argument("type", choices=list(LOG_REQUIRED))
     p.add_argument("fields", nargs="*", help="key=value; values are parsed as JSON when possible")
+    p = sub.add_parser("batch")
+    p.add_argument("source", metavar="FILE|-", help="a file with one command per line, or - for stdin")
     args = parser.parse_args()
 
     t = Testing(args.testing_dir)
     if args.command != "init" and not t.state_path.exists():
         parser.error(f"{args.testing_dir} is not a testing folder (missing testing.json; run init)")
-    if args.command == "set" and args.outcome != "pending" and not args.reason:
-        parser.error(f"set {args.outcome} needs --reason")
     commands = {
         "config": cmd_config, "harness": cmd_harness, "scenario": cmd_scenario, "scenarios": cmd_scenarios,
         "ready": cmd_ready, "result": cmd_result, "triage": cmd_triage, "set": cmd_set, "shots": cmd_shots,
@@ -1328,8 +1469,10 @@ def main() -> None:
             cmd_init(t, args)
         elif args.command == "run":
             cmd_run(t, args)
+        elif args.command == "batch":
+            cmd_batch(t, args, parser, commands)
         else:
-            with t.locked():
+            with t.locked(), t.transaction():
                 commands[args.command](t, args)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)

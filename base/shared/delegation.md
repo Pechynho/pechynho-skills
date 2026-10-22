@@ -51,7 +51,8 @@ The plugin ships these subagents; launch them with the `Agent` tool by their nam
 |---|---|---|---|
 | `pechynho:worker` | stronger | all | implementation with tests, plan authoring, fixes needing judgment |
 | `pechynho:worker-light` | weaker | all | bounded work that meets the weaker-tier criteria above |
-| `pechynho:analyst` | stronger | no Edit/Write; Bash stays for git and search, so "read-only" is also an instruction | code reviewers, finding verifiers, plan validators, review synthesis, exploration |
+| `pechynho:analyst` | stronger | no Edit/Write; Bash stays for git and search, so "read-only" is also an instruction | plan validators, review synthesis, exploration |
+| `pechynho:reviewer` | stronger | as the analyst; Bash also records its own results through the review tool | code reviewers and finding verifiers |
 | `pechynho:browser-tester` | stronger | all, including browser tools | click-through and visual testers of [playwright-testing](../../playwright-testing/SKILL.md) |
 
 If the plugin agents are not available (for example the skills were installed without the plugin),
@@ -65,7 +66,8 @@ resolves the newest SOL and LUNA models; see the repository README); spawn them 
 |---|---|---|---|
 | `pechynho_worker` | stronger | inherited | implementation with tests, plan authoring, fixes needing judgment |
 | `pechynho_worker_light` | weaker | inherited | bounded work that meets the weaker-tier criteria above |
-| `pechynho_analyst` | stronger | `read-only` | code reviewers, finding verifiers, plan validators, review synthesis, exploration |
+| `pechynho_analyst` | stronger | `read-only` | plan validators, review synthesis, exploration |
+| `pechynho_reviewer` | stronger | `workspace-write`, to record its results into the review folder in the work directory; it does not edit the project | code reviewers and finding verifiers |
 | `pechynho_browser_tester` | stronger | inherited | click-through and visual testers of [playwright-testing](../../playwright-testing/SKILL.md) |
 
 If the custom agents are not installed, use the built-in `worker` or `explorer` agent with the tier's

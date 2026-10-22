@@ -25,7 +25,8 @@ claude plugin install pechynho@pechynho-skills
 ```
 
 Installs the skills and the subagents `pechynho:worker`, `pechynho:worker-light`,
-`pechynho:analyst` (read-only) and `pechynho:browser-tester`. Update with
+`pechynho:analyst` (read-only), `pechynho:reviewer` (read-only except its review records) and
+`pechynho:browser-tester`. Update with
 `claude plugin marketplace update pechynho-skills` after a new version.
 
 ### Codex

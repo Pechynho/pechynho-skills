@@ -673,6 +673,15 @@ class ShowTest(PlanTestCase):
         self.edit_progress(lambda p: p["tasks"].pop("T-002"))
         self.assertIn('status: {"status": "pending"}', self.ok("show", "T-002"))
 
+    def test_several_tasks_in_one_call(self):
+        self.make_plan()
+        out = self.ok("show", "T-001", "T-002", "T-001")
+        self.assertEqual(re.findall(r"(?m)^# (T-\d+)", out), ["T-001", "T-002"])
+        result = self.run_plan("show", "T-001", "T-404")
+        self.assertExit(result, 1)
+        self.assertIn("unknown task T-404", result.stderr)
+        self.assertEqual(result.stdout, "")  # nothing printed before the refusal
+
     def test_unknown_task_exits_1(self):
         self.make_plan()
         result = self.run_plan("show", "T-404")
@@ -982,6 +991,93 @@ class ValidationsTest(PlanTestCase):
         self.ok("log", "validation_plan", "pass=V1", "mode=single", 'cells=[{"id": "ALL", "focus": "whole"}]')
         self.log_cell("ALL", "partial", 'unchecked=["permissions"]')
         self.assertEqual(self.ok("validations", "--open"), "V1/ALL  [partial]  whole\n")
+
+
+class SeveralTasksTest(PlanTestCase):
+    def test_set_several_tasks_in_the_given_order(self):
+        self.make_plan()
+        out = self.ok("set", "T-001", "T-002", "done", "--evidence", "tests pass")
+        self.assertEqual(out.splitlines(), ["T-001: pending -> done", "T-002: pending -> done"])
+        self.assertEqual([self.progress()["tasks"][t]["status"] for t in ("T-001", "T-002")], ["done", "done"])
+        self.assertEqual([(r["type"], r["id"], r["status"], r["from"], r["evidence"]) for r in self.log()],
+                         [("task", "T-001", "done", "pending", "tests pass"), ("task", "T-002", "done", "pending", "tests pass")])
+
+    def test_set_several_is_all_or_nothing(self):
+        self.make_plan()
+        # T-002 depends on T-001, which is not done yet when T-002 comes first.
+        self.refused("set", "T-002", "T-001", "done", "--evidence", "ok", message="T-002: dependencies not done: T-001")
+        self.refused("set", "T-001", "T-099", "in_progress", message="T-099: unknown task T-099")
+        self.refused("set", "T-001", "T-002", "cancelled", message="cancelled needs --reason")
+
+    def test_options_apply_to_every_task(self):
+        self.make_plan(hierarchy_tasks())
+        self.ok("set", "T-001.1", "T-001.2", "in_progress", "--owner", "worker")
+        self.assertEqual([self.progress()["tasks"][t]["owner"] for t in ("T-001.1", "T-001.2")], ["worker", "worker"])
+        self.assertEqual(self.progress()["implementation_status"], "in_progress")
+
+
+class BatchTest(PlanTestCase):
+    def batch(self, text: str, *, source: str = "-"):
+        return run_tool(PLAN, self.plan, "batch", source, env={"PYTHONUTF8": "1"}, input=text)
+
+    def refused_batch(self, text: str, message: str) -> None:
+        before = self.snapshot()
+        result = self.batch(text)
+        self.assertExit(result, 1)
+        self.assertIn(f"refused: {message}", result.stderr)
+        self.assertIn("nothing was written", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_both_line_forms_comments_and_blank_lines(self):
+        self.make_plan()
+        result = self.batch(
+            "# start the work\n"
+            "set T-001 in_progress --owner 'worker one'\n"
+            "\n"
+            '["log", "note", "text=a \\"quoted\\" note"]\n'
+            "set T-001 T-002 done --evidence \"tests pass\"\n")
+        self.assertOk(result)
+        self.assertEqual(result.stdout.splitlines()[-1], "batch: 3 commands applied")
+        self.assertIn("T-001: in_progress -> done", result.stdout)
+        progress = self.progress()
+        self.assertEqual((progress["tasks"]["T-001"]["owner"], progress["tasks"]["T-002"]["status"]), ("worker one", "done"))
+        self.assertEqual([(r["type"], r.get("id"), r.get("text")) for r in self.log()],
+                         [("task", "T-001", None), ("note", None, 'a "quoted" note'),
+                          ("task", "T-001", None), ("task", "T-002", None)])
+
+    def test_a_validation_may_use_a_pass_logged_earlier_in_the_batch(self):
+        self.make_plan()
+        result = self.batch(f"log validation_plan pass=V1 mode=areas cells='{CELLS}'\n"
+                            "log validation pass=V1 cell=A1 validators='[\"V-A1\"]' result=ok coverage=covered\n")
+        self.assertOk(result)
+        self.assertIn("A1  [covered]", self.ok("validations"))
+        self.assertOk(self.run_plan("validate"))
+
+    def test_batch_from_a_file(self):
+        self.make_plan()
+        commands = self.tmp / "commands.txt"
+        commands.write_text("set T-001 in_progress\n", encoding="utf-8")
+        self.assertOk(self.batch("", source=str(commands)))
+        self.assertEqual(self.progress()["tasks"]["T-001"]["status"], "in_progress")
+        self.refused("batch", str(self.tmp / "missing.txt"), message="cannot read")
+
+    def test_a_refusal_on_a_later_line_writes_nothing(self):
+        self.make_plan()
+        self.refused_batch("set T-001 in_progress\n"
+                           "log note text=x\n"
+                           "set T-099 done --evidence ok\n",
+                           "line 3: unknown task T-099; nothing was written")
+        self.refused_batch("log validation_plan pass=V1 mode=areas cells='" + CELLS + "'\n"
+                           "log validation pass=V2 cell=A1 validators=[] result=ok coverage=covered\n",
+                           "line 2: unknown validation pass 'V2'")
+
+    def test_wrong_usage_and_commands_not_allowed(self):
+        self.make_plan()
+        self.refused_batch("set T-001 finished\n", "line 1: wrong usage: argument status: invalid choice")
+        self.refused_batch("log note text=x\nstatus\n", "line 2: status is not allowed in a batch")
+        self.refused_batch("batch -\n", "line 1: batch is not allowed in a batch")
+        self.refused_batch('["set", ["T-001"], "done"]\n', "line 1: expected a JSON array of strings")
 
 
 class HelpersTest(unittest.TestCase):
