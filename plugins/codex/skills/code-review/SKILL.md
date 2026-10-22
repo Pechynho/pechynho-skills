@@ -38,14 +38,25 @@ files or their hashes so that everyone reads the same state; a snapshot does not
 stash or branch change. Write the reviewed diff once into the
 [work directory](shared/project-context.md#work-directory), for example
 `{work_dir}/review/{scope}/diff.patch`, and pass its path to the reviewers and verifiers; they read the
-same diff instead of each computing it. If the reviewed code changes during the review, update the
-affected findings and verify them against the new state.
+same diff instead of each computing it. If the reviewed code changes during the review, write the
+fresh diff the same way into another file and run `refresh`: the reopened cells go to reviewers again
+for the changed files and the stale findings to new verifications. Fixes made in step 6 need no
+refresh; step 6 verifies them.
 
 Track the review in the same folder with the [review tool](shared/review-tool.md). A diff a reviewer
 covers in one run is one chunk: `init --single` with the perspective groups of step 2. When a reviewer
 cannot cover its perspectives across the whole diff in one run, the review is large: `init`, `triage`
 and `chunks` cut the diff into coherent chunks and [large reviews](references/large-reviews.md) apply
 on top of the steps below.
+
+Before `init`, check whether the folder of this scope already exists. If it does, the review was
+interrupted: resume it instead of starting over. Start from `status`, then `coverage` and `findings`;
+the folder holds everything a new session needs, and `log.jsonl` shows what happened before. Return
+the cells of reviewer runs lost to the interruption to the queue with `set … pending`. Then write the
+current diff of the recorded scope into another file and run `refresh`, also when `status` reports no
+moved ref: changes in the working tree show only there. Continue with `next`. Ask the user only when
+the scope itself no longer fits, for example a different base branch or a rebased branch whose diff
+mostly changed; then a new review may be cheaper than a refresh.
 
 ## 2. Split the perspectives among review subagents
 
@@ -93,8 +104,8 @@ static analysis, tests or builds go to the main agent per the
 [ground rules](shared/ground-rules.md#verification).
 
 Keep stable finding IDs and traceable decisions. When a reviewer returns, write each finding verbatim
-into `findings/{ID}.md`, index it with `finding` and record the cell's coverage with `set`; reviewers
-stay read-only, the orchestrator keeps the record.
+into `findings/{ID}.md`, index it with `finding` and the files of its location and record the cell's
+coverage with `set`; reviewers stay read-only, the orchestrator keeps the record.
 
 ## 3. Resolve new business questions
 

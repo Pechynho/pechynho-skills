@@ -15,11 +15,12 @@ Usage:
     review.py DIR next [--limit N]                        cells to brief in the next wave
     review.py DIR start --owner R CELL [CELL ...]         cells handed to reviewer R in a wave
     review.py DIR set CELL STATUS [--unchecked F ...] [--reason R]
-    review.py DIR finding ID --cell CELL --kind K --title T [--severity S] [--outside] [--reviewer R]
+    review.py DIR finding ID --cell CELL --kind K --title T [--severity S] [--files F ...] [--outside] [--reviewer R]
     review.py DIR verify ID VERDICT --verifier V [--severity S]
     review.py DIR resolve ID STATUS --reason R [--duplicate-of ID]
     review.py DIR findings [--status S] [--chunk C] [--all]
     review.py DIR coverage                                gaps in the coverage of the diff
+    review.py DIR refresh FILE [--dry-run]                compare a fresh diff with diff.patch and reopen what changed
     review.py DIR status                                  derived overview, the entry point on resume
     review.py DIR validate
     review.py DIR log TYPE key=value ...                  append a record (check, decision, note)
@@ -31,10 +32,13 @@ Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -48,7 +52,8 @@ OPEN_CELLS = ("pending", "running", "partial")
 KINDS = ("bug", "recommendation", "question")
 SEVERITIES = ("critical", "high", "medium", "low")
 VERDICTS = ("confirmed", "refuted", "undecidable")
-FINDING_STATUSES = ("unverified", "disputed", "awaiting_decision", "duplicate") + VERDICTS
+FINDING_STATUSES = ("unverified", "disputed", "awaiting_decision", "duplicate", "stale") + VERDICTS
+SETTLED_FINDINGS = ("refuted", "duplicate")
 LOG_REQUIRED = {"check": ("subject", "result"), "decision": ("text",), "note": ("text",)}
 DEFAULT_WAVE_SIZE = 6
 DEFAULT_CHUNK_LINES = 2500
@@ -92,6 +97,19 @@ def write_json(path: Path, data) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def git(repo: str | None, *args: str) -> str | None:
+    """Output of a git command, or None when git or the repository is not available."""
+    try:
+        result = subprocess.run(["git", "-C", repo or ".", *args], capture_output=True, text=True)
+    except OSError:
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def resolve_sha(repo: str | None, ref: str) -> str | None:
+    return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
 
 
 def cell_id(chunk: str, group: str) -> str:
@@ -161,7 +179,8 @@ class Review:
 
 
 def parse_diff(path: Path) -> dict[str, dict]:
-    """Per-file stats of a unified git diff: added and deleted lines, rename, binary, new or deleted."""
+    """Per-file stats of a unified git diff: added and deleted lines, rename, binary, new or deleted,
+    and a hash of the file's section that tells whether the file's change differs between two diffs."""
     if not path.exists():
         raise Refused(f"missing {path}; write the reviewed diff there first")
     files: dict[str, dict] = {}
@@ -174,11 +193,14 @@ def parse_diff(path: Path) -> dict[str, dict]:
                 rest = line[len("diff --git "):]
                 name = rest.split(" b/", 1)[1] if " b/" in rest else rest
                 current = {"path": name, "added": 0, "deleted": 0, "status": "modified", "similarity": None,
-                           "binary": False, "sample": []}
+                           "binary": False, "sample": [], "hash": hashlib.sha256()}
                 files[name] = current
                 in_hunk = False
-                continue
             if current is None:
+                continue
+            if not line.startswith("index "):  # abbreviated blob IDs vary in length between runs
+                current["hash"].update(raw.encode("utf-8"))
+            if line.startswith("diff --git "):
                 continue
             if line.startswith("@@"):
                 in_hunk = True
@@ -202,6 +224,8 @@ def parse_diff(path: Path) -> dict[str, dict]:
                     current["sample"].append(line[1:])
             elif line.startswith("-"):
                 current["deleted"] += 1
+    for info in files.values():
+        info["hash"] = info["hash"].hexdigest()
     return files
 
 
@@ -349,6 +373,8 @@ def validate(review: Review) -> tuple[list[str], list[str]]:
             errors.append(f"finding {fid}: verified by its own reviewer {f['reviewer']}")
         if needs_second(f) and len(set(verifiers)) < 2:
             warnings.append(f"finding {fid}: {f.get('severity') or f['status']} needs a second verifier")
+        if f.get("status") == "stale":
+            warnings.append(f"finding {fid}: stale after a refresh, needs a new verification")
 
     if review.waves_needed() > 1 and not s.get("approval"):
         warnings.append("more than one wave is needed and the user has not approved the estimate")
@@ -370,10 +396,14 @@ def cmd_init(review: Review, args) -> None:
         raise Refused("review.json already exists; continue with status")
     review.root.mkdir(parents=True, exist_ok=True)
     review.findings_dir.mkdir(exist_ok=True)
+    repo = git(None, "rev-parse", "--show-toplevel")
+    revision = {"base": args.base, "head": args.head, "working_tree": args.working_tree, "repo": repo,
+                "base_sha": resolve_sha(repo, args.base), "head_sha": resolve_sha(repo, args.head)}
     review._state = {
         "schema_version": SCHEMA_VERSION,
         "scope": args.scope,
-        "revision": {"base": args.base, "head": args.head, "working_tree": args.working_tree},
+        "revision": revision,
+        "single": args.single,
         "wave_size": args.wave_size,
         "created_at": now(),
         "updated_at": now(),
@@ -383,6 +413,7 @@ def cmd_init(review: Review, args) -> None:
         "cells": {},
         "waves": [],
         "findings": {},
+        "refreshes": [],
     }
     if args.single:
         single(review, args.groups)
@@ -391,6 +422,8 @@ def cmd_init(review: Review, args) -> None:
     review.append_log({"type": "init", "scope": args.scope, "revision": review.state["revision"],
                        "single": args.single})
     print(f"created review.json, log.jsonl and findings/ in {review.root}")
+    if not revision["head_sha"] or not revision["base_sha"]:
+        print("warning: base or head not resolved in a git repository; status cannot report moved revisions")
     if args.single:
         print(f"one chunk C01 ({len(review.state['chunks']['C01']['files'])} files), "
               f"cells {', '.join(review.state['cells'])}")
@@ -628,13 +661,24 @@ def cmd_finding(review: Review, args) -> None:
         raise Refused(f"write findings/{args.id}.md with the full finding first")
     if args.kind == "bug" and not args.severity:
         raise Refused("a bug needs --severity")
+    files = sorted({location_file(f) for f in args.files or []})
     review.state["findings"][args.id] = {
         "cell": args.cell, "reviewer": args.reviewer or cell.get("owner"), "kind": args.kind, "severity": args.severity,
-        "title": args.title, "outside": args.outside, "status": "unverified", "verifications": [],
+        "title": args.title, "files": files, "outside": args.outside, "status": "unverified", "verifications": [],
     }
     review.save()
     review.append_log({"type": "finding", "id": args.id, "status": "unverified", "cell": args.cell})
     print(f"{args.id}: recorded")
+    if files and not args.outside and review.diff_path.exists():
+        unknown = [f for f in files if f not in parse_diff(review.diff_path)]
+        if unknown:
+            print(f"warning: not in diff.patch, refresh will not track them: {', '.join(unknown)}")
+
+
+def location_file(location: str) -> str:
+    """The repository path of a location such as ./src/x.php:42 or src/x.php:10-20."""
+    path = re.sub(r":\d+(?:[-:]\d+)*$", "", location.strip())
+    return path[2:] if path.startswith("./") else path
 
 
 def cmd_verify(review: Review, args) -> None:
@@ -651,6 +695,9 @@ def cmd_verify(review: Review, args) -> None:
     review.append_log({"type": "verification", "id": args.id, "verifier": args.verifier, "verdict": args.verdict,
                        "status": f["status"]})
     print(f"{args.id}: {f['status']}" + ("  (needs a second verifier)" if needs_second(f) and len(verifiers) < 2 else ""))
+    before = f["refreshes"][-1]["status"] if f.get("refreshes") else None
+    if before == "awaiting_decision" and len(f["verifications"]) == 1:
+        print(f"{args.id} was awaiting_decision before the refresh; resolve it again if the decision is still open")
 
 
 def cmd_resolve(review: Review, args) -> None:
@@ -670,6 +717,8 @@ def cmd_resolve(review: Review, args) -> None:
 
 def finding_line(fid: str, f: dict) -> str:
     tag = f"{f.get('severity') or '-'}/{f['kind']}/{f['status']}"
+    if f["status"] == "stale":
+        tag += f", was {f['refreshes'][-1]['status']}"
     return f"{fid}  [{tag}]  {f['cell']}  {f['title']}" + ("  (outside the change)" if f.get("outside") else "")
 
 
@@ -710,10 +759,131 @@ def cmd_coverage(review: Review, args) -> None:
     print("coverage complete" if not gaps else f"{gaps} open items")
 
 
+def cmd_refresh(review: Review, args) -> None:
+    """Compare a fresh diff of the same scope with diff.patch; reopen the cells and findings it touches."""
+    s = review.state
+    if args.file.resolve() == review.diff_path.resolve():
+        raise Refused("write the fresh diff into another file, e.g. diff.new.patch")
+    old, new = parse_diff(review.diff_path), parse_diff(args.file)
+    changed = sorted(p for p in old.keys() & new.keys() if old[p]["hash"] != new[p]["hash"])
+    added = sorted(new.keys() - old.keys())
+    removed = sorted(old.keys() - new.keys())
+    touched = set(changed) | set(removed)
+    if not touched and not added:
+        print("no change: the fresh diff matches diff.patch")
+        if not args.dry_run:
+            update_shas(review)
+            review.save()
+            review.append_log({"type": "refresh", "changed": [], "added": [], "removed": []})
+        return
+
+    single = s.get("single") and "C01" in s["chunks"]
+    recheck = set(changed) | (set(added) if single else set())
+    local = {cid: set(c.get("files", [])) for cid, c in s["chunks"].items() if c.get("kind") != "integration"}
+    if single:
+        local["C01"] |= set(added)
+    cells: dict[str, list[str]] = {}
+    for key, cell in s["cells"].items():
+        cid = key.partition("/")[0]
+        files = local[cid] & recheck if cid in local else recheck | set(added)
+        if files and cell["status"] in ("covered", "partial", "running"):
+            cells[key] = sorted(files)
+    running = [k for k in cells if s["cells"][k]["status"] == "running"]
+    if running:
+        raise Refused(f"running cells on changed files: {', '.join(running)}; record their result or return "
+                      "them with set … pending first")
+    findings: dict[str, list[str]] = {}
+    for fid, f in s["findings"].items():
+        if f["status"] in SETTLED_FINDINGS:
+            continue
+        cid = f["cell"].partition("/")[0]
+        scope = set(f.get("files") or []) or (local[cid] if cid in local else touched | set(added))
+        hit = scope & (touched | set(added))
+        if hit:
+            findings[fid] = sorted(hit)
+
+    print(f"changed {len(changed)}, added {len(added)}, removed {len(removed)} files")
+    for label, paths in (("changed", changed), ("added", added), ("removed", removed)):
+        for path in paths:
+            print(f"  {label:<8} {path}")
+    for key, files in cells.items():
+        print(f"reopen {key} ({s['cells'][key]['status']} -> partial): {len(files)} files to recheck")
+    for fid, files in findings.items():
+        print(f"stale {fid} ({s['findings'][fid]['status']}): {', '.join(files)}")
+    if args.dry_run:
+        return
+
+    number = len(s.setdefault("refreshes", [])) + 1
+    previous = review.root / "previous" / f"diff-{number:02d}.patch"
+    previous.parent.mkdir(exist_ok=True)
+    os.replace(review.diff_path, previous)
+    if args.file.resolve().parent == review.root.resolve():
+        os.replace(args.file, review.diff_path)
+    else:
+        shutil.copyfile(args.file, review.diff_path)
+    reason = f"refresh {number}: changed files"
+    for key, files in cells.items():
+        cell = s["cells"][key]
+        cell.update({"status": "partial", "unchecked": sorted(set(cell.get("unchecked", [])) | set(files)),
+                     "reason": reason})
+    for cell in s["cells"].values():
+        if cell.get("unchecked"):
+            cell["unchecked"] = [u for u in cell["unchecked"] if u not in removed]
+            if cell["status"] == "partial" and not cell["unchecked"]:
+                cell.update({"status": "covered", "reason": f"refresh {number}: unchecked files left the diff"})
+    for chunk in s["chunks"].values():
+        chunk["files"] = [f for f in chunk.get("files", []) if f not in removed]
+    if single:
+        s["chunks"]["C01"]["files"] = sorted(local["C01"] - set(removed))
+    new_chunk = None
+    if added and not single:
+        numbers = [int(m.group(1)) for m in (re.fullmatch(r"C(\d+)", c) for c in s["chunks"]) if m]
+        new_chunk = f"C{max(numbers, default=0) + 1:02d}"
+        s["chunks"][new_chunk] = {"title": f"added by refresh {number}", "files": added,
+                                  "lines": sum(size(new[p]) for p in added), "kind": "logic", "risk": "medium",
+                                  "treatment": "full"}
+    for fid, files in findings.items():
+        f = s["findings"][fid]
+        f.setdefault("refreshes", []).append({"refresh": number, "files": files, "status": f["status"],
+                                              "verifications": f["verifications"]})
+        f.update({"status": "stale", "verifications": []})
+    update_shas(review)
+    s["refreshes"].append({"at": now(), "previous": str(previous.relative_to(review.root)), "changed": changed,
+                           "added": added, "removed": removed, "cells": list(cells), "findings": list(findings),
+                           "new_chunk": new_chunk})
+    review.save()
+    review.append_log({"type": "refresh", "number": number, "changed": changed, "added": added, "removed": removed,
+                       "cells": list(cells), "findings": list(findings), "new_chunk": new_chunk})
+    print(f"refresh {number}: diff.patch replaced, previous kept in {previous.relative_to(review.root)}")
+    if new_chunk:
+        print(f"added files are in chunk {new_chunk} without cells: move them with chunk or assign cells")
+
+
+def update_shas(review: Review) -> None:
+    rev = review.state["revision"]
+    if rev.get("repo"):
+        rev["base_sha"] = resolve_sha(rev["repo"], rev["base"]) or rev.get("base_sha")
+        rev["head_sha"] = resolve_sha(rev["repo"], rev["head"]) or rev.get("head_sha")
+
+
+def moved_revisions(rev: dict) -> list[str]:
+    moved = []
+    for side in ("base", "head"):
+        recorded = rev.get(f"{side}_sha")
+        current = resolve_sha(rev.get("repo"), rev[side]) if rev.get("repo") and recorded else None
+        if current and current != recorded:
+            moved.append(f"{side} {rev[side]} moved {recorded[:10]} -> {current[:10]}")
+    return moved
+
+
 def cmd_status(review: Review, args) -> None:
     s = review.state
     rev = s["revision"]
     print(f"scope: {s['scope']}  base {rev['base']} head {rev['head']}" + ("  + working tree" if rev["working_tree"] else ""))
+    for line in moved_revisions(rev):
+        print(f"changed: {line}; write the current diff and run refresh")
+    if rev["working_tree"]:
+        print("working tree: changes since diff.patch show only in refresh with the current diff")
     approval = s.get("approval")
     print(f"approval: {approval['coverage'] if approval else 'none'}; wave size {s['wave_size']}; "
           f"waves started {len(s['waves'])}, still needed {review.waves_needed()}")
@@ -731,6 +901,9 @@ def cmd_status(review: Review, args) -> None:
     second = [i for i, f in s["findings"].items() if needs_second(f) and len({v["verifier"] for v in f["verifications"]}) < 2]
     if second:
         print(f"needs a second verifier: {', '.join(second)}")
+    stale = [i for i, f in s["findings"].items() if f["status"] == "stale"]
+    if stale:
+        print(f"stale after refresh, verify again: {', '.join(stale)}")
     ready = ready_cells(review)
     print(f"ready cells: {len(ready)}" + (f" (next: {', '.join(ready[:s['wave_size']])})" if ready else ""))
 
@@ -823,6 +996,7 @@ def main() -> None:
     p.add_argument("--kind", choices=KINDS, required=True)
     p.add_argument("--title", required=True)
     p.add_argument("--severity", choices=SEVERITIES)
+    p.add_argument("--files", nargs="+", help="files of the finding's location; refresh marks it stale by them")
     p.add_argument("--outside", action="store_true", help="an existing problem outside the change")
     p.add_argument("--reviewer", help="defaults to the owner of the cell")
     p = sub.add_parser("verify")
@@ -840,6 +1014,9 @@ def main() -> None:
     p.add_argument("--chunk")
     p.add_argument("--all", action="store_true")
     sub.add_parser("coverage")
+    p = sub.add_parser("refresh")
+    p.add_argument("file", type=Path, help="a fresh diff of the same scope, written the same way as diff.patch")
+    p.add_argument("--dry-run", action="store_true", help="print the impact without changing anything")
     sub.add_parser("status")
     sub.add_parser("validate")
     p = sub.add_parser("log")
@@ -854,8 +1031,8 @@ def main() -> None:
         "init": cmd_init, "triage": cmd_triage, "chunks": cmd_chunks, "chunk": cmd_chunk, "group": cmd_group,
         "cell": cmd_cell, "omit": cmd_omit, "estimate": cmd_estimate, "approve": cmd_approve, "next": cmd_next,
         "start": cmd_start, "set": cmd_set, "finding": cmd_finding, "verify": cmd_verify, "resolve": cmd_resolve,
-        "findings": cmd_findings, "coverage": cmd_coverage, "status": cmd_status, "validate": cmd_validate,
-        "log": cmd_log,
+        "findings": cmd_findings, "coverage": cmd_coverage, "refresh": cmd_refresh, "status": cmd_status,
+        "validate": cmd_validate, "log": cmd_log,
     }
     try:
         commands[args.command](review, args)

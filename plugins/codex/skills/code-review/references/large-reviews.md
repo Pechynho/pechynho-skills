@@ -63,8 +63,8 @@ the map.
 
 When a run returns:
 
-1. Write each finding verbatim into `findings/{ID}.md` and index it with `finding`. From then on work
-   with the index and the files, not with the returned text.
+1. Write each finding verbatim into `findings/{ID}.md` and index it with `finding` and the files of
+   its location. From then on work with the index and the files, not with the returned text.
 2. Record the coverage with `set`: `covered`, or `partial` with the concrete unchecked files or
    sections, which `next` offers as a follow-up first.
 3. Add a few lines to `waves.md` in the review folder: what the run found about contracts and links to
@@ -73,8 +73,8 @@ When a run returns:
    time; verification does not wait for the end of all waves. The number of verifiers follows the
    [verification rules](../SKILL.md#4-independent-verification) per batch of new findings.
 
-A run lost to an interruption returns its cells to the queue with `set … pending`. On resume start
-from `status`, then `coverage` and `findings`; the folder holds everything a new session needs.
+A run lost to an interruption returns its cells to the queue with `set … pending`; resuming an
+interrupted review follows [clarify the assignment](../SKILL.md#1-clarify-the-assignment).
 
 ## 6. Synthesis
 
