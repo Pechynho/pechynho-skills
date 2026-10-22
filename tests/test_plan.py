@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -277,6 +278,17 @@ class ValidateTasklistTest(PlanTestCase):
         self.assertIn("missing reference chapters/missing.md#x", result.stdout)
         self.assertNotIn("01-core.md", result.stdout)
 
+    def test_references_must_stay_in_the_plan_folder(self):
+        outside = self.tmp / "work" / "mockup.html"
+        outside.parent.mkdir()
+        outside.write_text("<p>mockup</p>")
+        self.make_plan([task("T-001", references=[str(outside), "../work/mockup.html", "chapters/01-core.md"])])
+        result = self.run_plan("validate")
+        self.assertExit(result, 1)
+        self.assertIn(f"reference outside the plan folder {outside}", result.stdout)
+        self.assertIn("reference outside the plan folder ../work/mockup.html", result.stdout)
+        self.assertNotIn("01-core.md", result.stdout)
+
     def test_phase_with_unknown_task(self):
         self.make_plan(phases=[{"id": "P1", "name": "First", "tasks": ["T-001", "T-404"]}])
         self.assertValidateError("tasks/index.json phase P1: unknown task T-404")
@@ -294,6 +306,109 @@ class ValidateTasklistTest(PlanTestCase):
         self.make_plan(prd=None)
         self.assertValidateWarning("prd.md not found")
         self.assertIn("ok: 2 tasks, 1 warnings", self.ok("validate"))
+
+
+class ValidateMockupsTest(PlanTestCase):
+    """mockups/index.json: every file listed, approvals and refusals backed by decisions.md."""
+
+    def make_mockups(self, mockups: list[dict], *, declined: list | None = None,
+                     files: tuple[str, ...] = ("01-dashboard.html",), tasks: list[dict] | None = None,
+                     decisions: str = "# Decisions\n\n## D-001 Dashboard look\n") -> None:
+        self.make_plan(tasks)
+        folder = self.plan / "mockups"
+        folder.mkdir()
+        for name in files:
+            (folder / name).write_text("<p>mockup</p>", encoding="utf-8")
+        write_json(folder / "index.json",
+                   {"schema_version": 1, "mockups": mockups, "declined": declined or []})
+        (self.plan / "decisions.md").write_text(decisions, encoding="utf-8")
+        (self.plan / "README.md").write_text("[Mockups](mockups/index.json)\n", encoding="utf-8")
+
+    def make_mockups_again(self, mockups: list[dict], **kwargs) -> None:
+        shutil.rmtree(self.plan)
+        self.make_mockups(mockups, **kwargs)
+
+    def approved(self, **fields) -> dict:
+        return {"id": "M-001", "file": "01-dashboard.html", "status": "approved", "decision": "D-001",
+                **fields}
+
+    def test_approved_mockup_referenced_by_a_task(self):
+        self.make_mockups([self.approved()], tasks=[task("T-001", references=["mockups/01-dashboard.html"])])
+        self.assertIn("ok: 1 tasks, 0 warnings", self.ok("validate"))
+
+    def test_unlisted_file(self):
+        self.make_mockups([self.approved()], files=("01-dashboard.html", "02-detail.html"))
+        self.assertValidateError("mockups/index.json: mockups/02-detail.html is not listed")
+
+    def test_listed_file_must_exist(self):
+        self.make_mockups([self.approved(file="03-missing.html")], files=())
+        self.assertValidateError("mockups/index.json M-001: missing file 03-missing.html")
+
+    def test_file_outside_the_mockups_folder(self):
+        self.make_mockups([self.approved(file="../../work/mockup.html")], files=())
+        self.assertValidateError("mockups/index.json M-001: file must be a plain path inside the mockups folder")
+
+    def test_file_path_must_be_plain(self):
+        self.make_mockups([self.approved(file="./01-dashboard.html")])
+        result = self.run_plan("validate")
+        self.assertExit(result, 1)
+        self.assertIn("file must be a plain path inside the mockups folder: ./01-dashboard.html", result.stdout)
+
+    def test_malformed_index(self):
+        self.make_mockups([])
+        index = self.plan / "mockups" / "index.json"
+        for data, message in (([], "mockups/index.json: expected an object"),
+                              ({"schema_version": 1, "mockups": ["01-dashboard.html"]},
+                               "mockups/index.json: mockups must be a list of objects"),
+                              ({"schema_version": 1, "declined": "none"},
+                               "mockups/index.json: declined must be a list of objects"),
+                              ({"schema_version": 2, "mockups": []},
+                               "mockups/index.json: unsupported schema_version 2")):
+            with self.subTest(data=data):
+                write_json(index, data)
+                result = self.run_plan("validate")
+                self.assertExit(result, 1)
+                self.assertIn(f"error: {message}", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_approval_needs_a_decision_in_decisions_md(self):
+        self.make_mockups([self.approved(decision=None)])
+        self.assertValidateError("mockups/index.json M-001: approved without a decision")
+        self.make_mockups_again([self.approved(decision="D-009")])
+        self.assertValidateError("mockups/index.json M-001: decision D-009 is not in decisions.md")
+
+    def test_invalid_status_and_duplicate_id(self):
+        self.make_mockups([self.approved(), self.approved(file="02-detail.html", status="final")],
+                          files=("01-dashboard.html", "02-detail.html"))
+        result = self.run_plan("validate")
+        self.assertExit(result, 1)
+        self.assertIn("error: mockups/index.json: duplicate mockup ID M-001", result.stdout)
+        self.assertIn("error: mockups/index.json M-001: invalid status 'final'", result.stdout)
+
+    def test_proposed_mockup_is_a_warning_and_cannot_guide_a_task(self):
+        proposed = {"id": "M-001", "file": "01-dashboard.html", "status": "proposed"}
+        self.make_mockups([proposed])
+        self.assertValidateWarning("mockups/index.json M-001: not approved yet")
+        self.make_mockups_again([proposed], tasks=[task("T-001", references=["mockups/01-dashboard.html"])])
+        self.assertValidateError("tasks/01-core.json T-001: references mockups/01-dashboard.html, which is not approved")
+
+    def test_declined_scope_needs_a_decision(self):
+        self.make_mockups([], files=(), declined=[{"scope": "Notification e-mail", "decision": "D-001"}])
+        self.assertIn("ok: 2 tasks", self.ok("validate"))
+        self.make_mockups_again([], files=(), declined=[{"scope": "Notification e-mail"}])
+        self.assertValidateError("mockups/index.json: declined 'Notification e-mail' without a decision")
+
+    def test_task_reference_to_mockups_without_index(self):
+        self.make_plan([task("T-001", references=["mockups/01-dashboard.html"])])
+        (self.plan / "mockups").mkdir()
+        (self.plan / "mockups" / "01-dashboard.html").write_text("<p>mockup</p>", encoding="utf-8")
+        self.assertValidateError("missing")
+        self.assertIn("mockups/index.json", self.run_plan("validate").stdout)
+
+    def test_readme_without_a_link_is_a_warning(self):
+        self.make_mockups([self.approved()])
+        (self.plan / "README.md").write_text("# Feature\n", encoding="utf-8")
+        self.assertValidateWarning("README.md: no link to the mockups")
 
 
 class ValidateProgressTest(PlanTestCase):

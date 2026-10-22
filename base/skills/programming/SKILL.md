@@ -46,12 +46,13 @@ Respect the dependencies and the stable task IDs. The main agent updates the pro
 blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done` requires the task's conditions including the relevant verification.
 A newly discovered business ambiguity goes to the user and the answer back into the plan.
 
-At the start, find the large visual steps of the work that the plan does not already settle by an
-approved mockup or a recorded refusal, for example a new admin dashboard or an e-mail template, and ask in one batch whether to make mockups before them per
-the [mockups procedure](shared/mockups.md). This is the ask-immediately case of
+At the start, find the large visual steps of the work that the plan's mockup index does not already
+settle by an approved mockup or a refusal, for example a new admin dashboard or an e-mail template,
+and ask in one batch whether to make mockups before them per the
+[mockups procedure](shared/mockups.md). This is the ask-immediately case of
 [when to ask](shared/business-questions.md#when-to-ask): the answer decides how those steps are built.
-Build the look of such a step only after its mockup is approved; meanwhile implement what the look does
-not affect.
+Build the look of such a step only after its mockup is approved; meanwhile implement what the look
+does not affect.
 
 ## 2. Choose how to work
 

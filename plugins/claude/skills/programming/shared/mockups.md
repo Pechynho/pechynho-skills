@@ -17,8 +17,9 @@ Ask with the question tool whether to make them and in what scope, in one batch,
 - **Screens and states:** also the empty, loading, error and permission states and the narrow layout.
 - **One screen:** only the screen named by the user, as a quick illustration.
 
-With a plan, record the answer as a decision, a refusal and the screens left out included, so that
-programming does not ask about the same screens again.
+With a plan, record the answer as a decision and in the plan's
+[mockup index](../../planning/references/artifacts.md#mockup-index), a refusal and the screens left out
+included, so that programming does not ask about the same screens again.
 
 ## Variants and approval
 
@@ -45,9 +46,11 @@ and showing them to the user stays with the main agent.
 
 ## Where they live
 
-- **With a plan:** the approved mockups in `{plans_dir}/{feature}/mockups/`, linked from the README
-  together with a published link where there is one. Record the approval as a confirmed decision that
-  names the files and add the mockup to the `references` of the tasks that build those screens.
+- **With a plan:** in `{plans_dir}/{feature}/mockups/`, listed in its
+  [mockup index](../../planning/references/artifacts.md#mockup-index) and linked from the README. The
+  versioned file is the mockup; a published page is only a preview of it. Record the approval as a
+  confirmed decision, put its ID into the index and add the mockup to the `references` of the tasks
+  that build those screens.
 - **Without a plan:** in `{work_dir}/mockups/{subject}/` per
   [project context](project-context.md#work-directory), named in the briefs of the implementers and in
   any handover. The work directory is temporary; until the work is done, nothing else keeps them.

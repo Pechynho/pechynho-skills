@@ -19,6 +19,7 @@
 │   ├── 03-ui.json
 │   └── 04-testing-and-rollout.json
 ├── mockups/
+│   ├── index.json
 │   └── 01-member-list.html
 ├── progress.json
 └── log.jsonl
@@ -28,6 +29,14 @@ The chapters are examples, not mandatory areas of every change. A small plan may
 and task file; do not create empty documents. Reorganize an existing plan only per the assignment.
 Paths inside JSON are relative to the plan folder, paths to source code to the project root; Markdown
 links are relative to the document that contains them.
+
+The plan is versioned and must work for another developer who has only the repository. Everything a
+plan document, the tasklist, the progress or the log relies on is versioned too: its chapters,
+mockups, feedback and the source code. The
+[work directory](../shared/project-context.md#work-directory), temporary files, a published artifact,
+a local tool state or the conversation may accompany a versioned copy or summary, never replace it.
+Move what the plan needs into its folder and write the substantial conclusions of working material
+into the plan, the progress or the log.
 
 Read and change the tasklist, the progress and the log with the [plan tool](../shared/plan-tool.md)
 where it is available; it implements the rules below.
@@ -42,8 +51,8 @@ and their resolution with stable FB IDs; the status of implementation tasks stil
 - **README.md:** a short goal and scope, an overview of stages and links to the PRD, decisions, all
   chapters, the JSON index, the progress and any mockups. Do not duplicate the status and task counts
   by hand.
-- **mockups/*.html:** only the mockups the user approved per the
-  [mockups procedure](../shared/mockups.md); they bind the look of the implementation.
+- **mockups/*.html:** the mockups per the [mockups procedure](../shared/mockups.md), listed in the
+  [mockup index](#mockup-index); the approved ones bind the look of the implementation.
 - **prd.md (Product Requirements Document):** for whom, why and what we build; scenarios, business
   rules, included and postponed scope, errors and exceptions, constraints and measurable or observable
   acceptance criteria with stable IDs `AC-001`. For rules state the source of the user decision.
@@ -71,7 +80,7 @@ Each task or subtask has a globally unique stable ID, for example `T-001` and `T
 | `id`, `title` | Identity and a short name of the result. |
 | `parent_id` | ID of the parent task, or `null`; subtasks are separate items. |
 | `outcome` | The unambiguous required result and the boundary of the work. |
-| `references` | Paths to chapters, optionally with a Markdown anchor, and to approved mockups. |
+| `references` | Paths to chapters, optionally with a Markdown anchor, and to approved mockups; inside the plan folder. |
 | `acceptance_criteria` | IDs of the PRD criteria the task contributes to. |
 | `depends_on` | IDs of tasks whose completion is required before the start. |
 | `code_areas` | Verified existing and explicitly marked proposed paths/modules. |
@@ -104,6 +113,33 @@ coherent result: a subtask that cannot be verified on its own is too small.
 justification, not a default value; a task that touches access, billing, limits, data lifecycle or
 concurrency is not `low` risk. The validators confirm the values and the validation record in
 `progress.json` states which tasks they confirmed.
+
+## Mockup index
+
+`mockups/index.json` exists whenever the plan has mockups or a recorded refusal of them. It contains
+`schema_version`, `mockups` and `declined`:
+
+```json
+{
+  "schema_version": 1,
+  "mockups": [
+    {"id": "M-001", "file": "01-member-list.html", "screens": "Member list", "status": "approved",
+     "decision": "D-004", "acceptance_criteria": ["AC-002"], "preview": "https://…"}
+  ],
+  "declined": [{"scope": "Invitation e-mail", "decision": "D-005"}]
+}
+```
+
+Each mockup has a unique `id`, a `file` relative to the `mockups/` folder, the `screens` it shows and a
+`status`: `proposed` while the user has not approved it, `approved` with the `decision` that records the
+approval. `acceptance_criteria` and `preview`, a published link, are optional; the preview never
+replaces the file. `declined` lists the visual scope the user did not want mockups for, each with its
+decision. Rejected variants do not appear. A re-approved mockup keeps its ID and file and gets the new
+decision; Git keeps the previous version.
+
+`plan.py validate` checks that the index and the files in `mockups/` match, that approvals and
+refusals name a decision present in `decisions.md`, that tasks reference only approved mockups and that
+the README links the mockups.
 
 ## Single source of progress
 

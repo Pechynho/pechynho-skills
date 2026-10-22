@@ -53,7 +53,9 @@ PROGRESS_KEYS = {
     "schema_version", "feature", "updated_at", "plan_status", "implementation_status", "tasks",
     "open_questions", "handoff", "delivery",
 }
+MOCKUP_STATUSES = ("proposed", "approved")
 AC_RE = re.compile(r"\bAC-\d+\b")
+DECISION_RE = re.compile(r"\bD-\d+\b")
 
 
 class Refused(Exception):
@@ -178,6 +180,97 @@ def find_cycle(edges: dict[str, list[str]]) -> list[str] | None:
     return None
 
 
+def inside(root: Path, path: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def validate_mockups(plan: Plan, errors: list[str], warnings: list[str]) -> None:
+    """mockups/index.json lists every mockup file with its approval, and the declined scope."""
+    root = plan.root
+    folder = root / "mockups"
+    if not folder.exists():
+        for tid, task in plan.tasks.items():
+            for ref in task.get("references", []):
+                if ref.startswith("mockups/"):
+                    errors.append(f"{plan.task_file[tid]} {tid}: references {ref} without mockups/index.json")
+        return
+    try:
+        index = read_json(folder / "index.json")
+    except Refused as e:
+        errors.append(str(e))
+        return
+    if not isinstance(index, dict):
+        errors.append("mockups/index.json: expected an object")
+        return
+    if index.get("schema_version") != SCHEMA_VERSION:
+        errors.append(f"mockups/index.json: unsupported schema_version {index.get('schema_version')!r}")
+    for key in ("mockups", "declined"):
+        entries = index.get(key, [])
+        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+            errors.append(f"mockups/index.json: {key} must be a list of objects")
+            return
+    decisions_path = root / "decisions.md"
+    decisions = set(DECISION_RE.findall(decisions_path.read_text(encoding="utf-8"))) \
+        if decisions_path.exists() else set()
+    listed: dict[str, dict] = {}
+    ids: set[str] = set()
+    for item in index.get("mockups", []):
+        mid, rel = item.get("id"), item.get("file")
+        where = f"mockups/index.json {mid or rel}"
+        if not mid:
+            errors.append(f"mockups/index.json: mockup without an ID ({rel})")
+        elif mid in ids:
+            errors.append(f"mockups/index.json: duplicate mockup ID {mid}")
+        ids.add(mid)
+        if not rel or not isinstance(rel, str):
+            errors.append(f"{where}: missing file")
+            continue
+        parts = rel.split("/")
+        if rel.startswith("/") or any(part in ("", ".", "..") for part in parts) \
+                or not inside(folder, folder / rel):
+            errors.append(f"{where}: file must be a plain path inside the mockups folder: {rel}")
+            continue
+        if not (folder / rel).exists():
+            errors.append(f"{where}: missing file {rel}")
+        listed[f"mockups/{rel}"] = item
+        status = item.get("status")
+        if status not in MOCKUP_STATUSES:
+            errors.append(f"{where}: invalid status {status!r}")
+        elif status == "approved":
+            decision = item.get("decision")
+            if not decision:
+                errors.append(f"{where}: approved without a decision")
+            elif decision not in decisions:
+                errors.append(f"{where}: decision {decision} is not in decisions.md")
+        else:
+            warnings.append(f"{where}: not approved yet")
+    for item in index.get("declined", []):
+        decision = item.get("decision")
+        if not item.get("scope"):
+            errors.append("mockups/index.json: declined entry without a scope")
+        if not decision:
+            errors.append(f"mockups/index.json: declined {item.get('scope')!r} without a decision")
+        elif decision not in decisions:
+            errors.append(f"mockups/index.json: decision {decision} is not in decisions.md")
+    for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_file() and path.name != "index.json" and rel not in listed:
+            errors.append(f"mockups/index.json: {rel} is not listed")
+    for tid, task in plan.tasks.items():
+        for ref in task.get("references", []):
+            target = ref.split("#", 1)[0]
+            if target.startswith("mockups/") and target in listed \
+                    and listed[target].get("status") != "approved":
+                errors.append(f"{plan.task_file[tid]} {tid}: references {ref}, which is not approved")
+    readme = root / "README.md"
+    if listed and readme.exists() and "mockups/" not in readme.read_text(encoding="utf-8"):
+        warnings.append("README.md: no link to the mockups")
+
+
 def validate(plan: Plan) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -211,7 +304,11 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
                 errors.append(f"{where}: a subtask must not depend on its {kind} {dep}")
         for ref in task.get("references", []):
             target = ref.split("#", 1)[0]
-            if target and not (root / target).exists():
+            if not target:
+                continue
+            if not inside(root, root / target):
+                errors.append(f"{where}: reference outside the plan folder {ref}")
+            elif not (root / target).exists():
                 errors.append(f"{where}: missing reference {ref}")
 
     deps = {tid: [d for d in t.get("depends_on", []) if d in plan.tasks] for tid, t in plan.tasks.items()}
@@ -246,6 +343,7 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
             errors.append(f"tasks reference {ac}, which prd.md does not define")
     else:
         warnings.append("prd.md not found; acceptance criteria coverage not checked")
+    validate_mockups(plan, errors, warnings)
 
     if not plan.progress_path.exists():
         errors.append("missing progress.json (run init)")
