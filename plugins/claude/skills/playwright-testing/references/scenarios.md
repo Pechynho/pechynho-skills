@@ -7,10 +7,12 @@ screens needed to catch regressions, not the whole unrelated product.
 
 ## Overview before the pass
 
-Each scenario has an ID, goal, role, initial data and state, steps, expected result and the relevant
-viewport. With two testers add the responsible agent. Prioritize the main path, the riskiest changes
-and permissions. Scenarios may be extended while exploring; new points must relate to the assignment
-and have an explained purpose.
+Each scenario has an ID, goal, group, kind (functional, visual or both), priority, role, initial data
+and state, steps, expected result and the relevant viewports. Write the list as JSON for the
+[browser tool](../shared/browser-tool.md) (`id`, `title`, `group`, `kind`, `priority`, `role`,
+`viewports`, `data`); the steps and the expected result go into the script as its steps and checks.
+Prioritize the main path, the riskiest changes and permissions. Scenarios may be extended while
+exploring; new points must relate to the assignment and have an explained purpose.
 
 ## Functional areas
 

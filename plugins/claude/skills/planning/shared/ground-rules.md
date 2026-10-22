@@ -32,9 +32,9 @@ it says so explicitly.
   agent.** Subagents do not run these tools, not even on a single file. They may write tests, check code
   by reading and hand over a request for a specific check.
 - **Exception for requested browser click-through testing:** testers assigned under
-  [playwright-testing](../../playwright-testing/SKILL.md) may drive a browser and run one-off browser
-  scripts. Automated test suites, linters, static analysis, formatters and builds remain exclusive to
-  the main agent.
+  [playwright-testing](../../playwright-testing/SKILL.md) may drive a browser, run their scenario
+  scripts through the browser tool and run one-off browser scripts. Automated test suites, linters,
+  static analysis, formatters and builds remain exclusive to the main agent.
 - Run checks after finishing the work or a larger coherent part. Choose the relevant tools and scope by
   the change; do not run them after every small edit.
 - The main agent coordinates subagents' requests, merges identical checks and passes the results back.

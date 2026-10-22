@@ -1,6 +1,6 @@
 ---
 name: playwright-testing
-description: Click-through and visual verification of features or changes with headless Playwright in the dev environment by tester subagents, each with one bounded group of scenarios, without verifiers. Use on a request for browser testing or a UI/UX check; findings are presented or handed to programming.
+description: Click-through and visual verification of features or changes in the dev environment with headless Playwright scenario scripts run and tracked by the browser tool, written and judged by tester subagents per group of scenarios, without verifiers. Use on a request for browser testing or a UI/UX check; findings are presented or handed to programming.
 ---
 
 # Playwright testing
@@ -9,8 +9,10 @@ Before starting, resolve the [project context](shared/project-context.md) and fo
 [ground rules](shared/ground-rules.md); the project's own instructions apply on top of them.
 
 Verify the real use of a feature, its functional scenarios and its look on small and large screens.
-Testing is done by **tester subagents, each with one bounded group of scenarios, without separate
-verifiers**. The main agent processes the results; no synthesizing subagent is needed.
+**Scenario scripts drive the browser; the [browser tool](shared/browser-tool.md) runs them in a limited
+number of headless browsers and keeps the state of the pass.** Tester subagents write the scripts of a
+group of scenarios and judge the screenshots, without separate verifiers. The main agent runs the
+pass, triages the failures and processes the results; no synthesizing subagent is needed.
 
 Use the skill for requested click-through testing; an implementation or a code review by itself is not
 consent to launch a browser. On an explicit browser-testing assignment do not ask for further general
@@ -30,42 +32,61 @@ Determine the Git scope (working tree, branch against its base, or commits) the 
 tested form of the working tree. Verify that the running dev application really contains these changes;
 when the code changes during the pass, mark which scenarios need repeating.
 
-## 2. Split of work and scenarios
+## 2. Scenarios, groups and the testing folder
 
-- **One tester:** a small scope that fits one run. In one pass it checks functionality and UI/UX using
-  the same prepared states; it does not repeat a whole scenario just for a screenshot.
-- **Several testers:** a larger feature or many scenarios. Split the scenario list into groups by
-  screen or flow so that each group fits one run per
-  [one assignment per run](shared/delegation.md#one-assignment-per-run); one tester
-  owns one group. When the feature has a substantial visual scope, separate the functional pass from
-  the UI/UX and responsiveness pass: the functional tester works from the DOM, the responses and the
-  dev DB and does not view screenshots, the UI tester takes and views them. The number of testers
-  follows the number of groups. Run at most two or three browsers in parallel and sequence the rest;
-  assign the test data per group so that mutating scenarios do not collide.
+The pass lives in a testing folder kept by the [browser tool](shared/browser-tool.md),
+`{work_dir}/playwright/{scope}/`. Before `init`, check whether the folder of this scope already exists.
+If it does, the pass was interrupted: resume it instead of starting over. Start from `status`, which
+also returns the scenarios of a dead run to the queue and kills its leftover browsers; release lost
+subagent runs with `release … --lost`, then continue with `next`.
 
 The main agent hands over the scenarios **or explicitly assigns deriving them from the changes**. When
 deriving, the tester goes through the diff, the needed surrounding code, the assignment, the
 specification and the decisions, and builds the scenario overview per the
-[coverage rules](references/scenarios.md). The main agent checks the coverage before a large pass
-without requiring further user approval of a clear assignment. With several testers one shared list is
-built first, by the main agent or by one tester, so that the others do not repeat the preparation.
+[coverage rules](references/scenarios.md). One shared list is built once, by the main agent or by one
+tester, so that others do not repeat the preparation; the main agent checks the coverage before a large
+pass without requiring further user approval of a clear assignment. Load it with `scenarios FILE`.
 
-Hand over the scope, URLs, revision, roles, existing decisions, the
-[ground rules](shared/ground-rules.md) and the concrete project rule files, the scenarios or the task to derive them, ownership of data and browsers,
-the fix mode and the results format. Model choice follows
-[delegation](shared/delegation.md): exploration and visual judgment go to the
-stronger model. The UI tester must be able to view screenshots, not only save them; without that
-ability do not mark the look as verified.
+Split the scenarios into **groups** by screen or flow. A group owns its test data, so mutating scenarios
+of different groups do not collide; the tool runs one group's scenarios in order and different groups in
+parallel. Mark each scenario `functional`, `visual` or `both`.
+
+The pass is made of units of work per [number of runs](shared/delegation.md#number-of-runs):
+
+- **Script authoring:** one unit is a group, or several small groups that share screens, whose scripts
+  fit one run. A small pass is one unit; then one tester writes, runs and judges everything.
+- **Runs** need no subagent: the tool runs the scripts in at most
+  [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers) headless browsers and
+  sequences the rest.
+- **Triage** of failures is done by the main agent from `result` and the failure screenshot; a failure it
+  cannot explain goes to the script's author or to one triage run.
+- **Visual judgment:** one unit is the pending screenshots of related screens that one run can view;
+  with a substantial visual scope it is separate from script authoring.
+- **Exploration** through interactive MCP is optional, one bounded run (see step 6).
+
+Record each subagent run with `assign` and close it with `release`. Hand over the scope, URLs, revision,
+roles, existing decisions, the [ground rules](shared/ground-rules.md) and the concrete project rule
+files, the testing folder and the tool command, the scenarios or groups, ownership of data, the fix
+mode and the results format. Model choice follows [delegation](shared/delegation.md): script authoring,
+exploration and visual judgment go to the stronger model. The visual judge must be able to view
+screenshots, not only list them; without that ability do not mark the look as verified.
 
 ## 3. Environment and test data
 
 Use **Playwright in headless mode**, without opening windows on the user's desktop, including windows
-from WSL in Windows. Before the first navigation check the configuration of the tool used: start
-Playwright MCP with `--headless`, set `headless: true` in own scripts. Loading the skill does not change
+from WSL in Windows. The scenario scripts of the browser tool always run headless. Before the first
+interactive navigation check the configuration of the tool used: start Playwright MCP with `--headless`,
+set `headless: true` in own one-off scripts. Loading the skill does not change
 the configuration of an MCP server already running. If the available tool does not support headless
 mode, use an available headless alternative; open a visible window only by agreement with the user.
 Verify the look by taking and actually viewing screenshots at the required viewport sizes; headless mode
 neither replaces nor prevents this check. Pass this rule to the testers.
+
+The scripts need Node 18+ and Playwright with its browser. `init --playwright` points the tool at the
+project's installation; when the project has none, installing Playwright into the testing folder is a
+package installation and needs the user's consent per the
+[ground rules](shared/ground-rules.md#git-and-package-installation). Without Node or Playwright the pass
+falls back to a headless interactive tool, with the same folder and statuses kept by hand.
 
 Before the first write verify **the target URL and the actual database of the application** from
 non-sensitive environment or connection information. An account name or the look of a page is not
@@ -80,65 +101,93 @@ Playwright are all possible as needed. Prefer application services or the UI for
 events and invariants. With SQL knowingly handle the bypassed behavior and caches; do not report a bug
 created by inconsistent fixtures as a product bug.
 
-Use recognizable test accounts and record the created data. Before a larger intervention back up per
-the project rules and record the restore. Store one-off scripts and results in the
-[work directory](shared/project-context.md#work-directory), for example `{work_dir}/playwright/{scope}/`.
+Use recognizable test accounts and record the created data with `log data`. Before a larger
+intervention back up per the project rules and record the restore. Scripts, results and one-off helpers
+live in the testing folder in the [work directory](shared/project-context.md#work-directory).
 For worktrees and shared services follow the resolved
 [dev environment](shared/project-context.md#dev-environment).
 
-With several testers separate the accounts or records for mutating scenarios. Prepare shared states first
-and then read them, or sequence the passes. Use separate browser contexts if the tool supports them;
-over a single shared MCP session test sequentially. Do not manipulate the user's live tabs. The dev
+Each group has its own accounts or records for mutating scenarios; inside a group the scenarios run in
+ID order, so a later one may read a state an earlier one prepared. Over a single shared MCP session
+explore sequentially. Do not manipulate the user's live tabs. The dev
 application may have external integrations: for payments and messages use the test mode and local
 capture (e.g. Mailpit); click-through testing is no permission for a real payment or a message to a
 real recipient.
 
-## 4. Click-through and visual check
+## 4. Scripts and runs
 
-Run the scenarios per the [checklist](references/scenarios.md). Record the results and relevant new
-scenarios as you go. Confirm a functional success after a reload, on the follow-up screen or by reading
-the dev DB; a toast alone is not enough. Besides the browser interaction check relevant console errors
-and network requests. Determine whether it is a bug of the application, the environment or the test script.
+Playwright is driven by scenario scripts, not by an agent clicking through the pass: a run returns a
+few lines instead of page snapshots, and the same scripts serve the retest after fixes. Write one
+script per scenario in `scenarios/{ID}.mjs` with the harness of the
+[browser tool](shared/browser-tool.md#scenario-scripts); it records the steps, checks, console and page
+errors, failed requests, layout hints and screenshots.
+Take selectors from the source first; use interactive MCP only briefly, for what the source does not
+answer. Each script prepares or restores the data it needs, so that a mutating scenario runs again.
 
-Assigned testers may drive Playwright and run one-off browser scripts for this pass; everything else in
-[verification](shared/ground-rules.md#verification) stays with the main agent, and a click-through
-script is no reason to run the whole existing Playwright test suite.
+Check functional success the way a user sees it and then where it lasts: after a reload, on the
+follow-up screen or by reading the dev DB; a toast alone is not enough. A visual scenario calls `shot`
+in each state to judge; the harness takes it at every viewport of the scenario without repeating it,
+or in a fresh mobile context per viewport with `perViewport` when the application detects the device.
 
-Run the repeatable scenarios as headless scripts in the working directory, one per scenario and named
-by its ID, with a compact output: the ID, passed or failed, the checked facts and the paths of the
-evidence. Interactive driving through MCP is for exploration and for diagnosing a failure, not for the
-pass itself. Save screenshots as files and open one only when the scenario needs a visual judgment.
-The scripts are the basis of the retest after fixes: each one states the command that runs it and
-prepares or restores the initial state it expects, so that a mutating scenario runs again; where the
-script cannot restore its data, name the preparation step in the results.
+The author runs each new script with `run ID`, fixes what is the script's fault and confirms it with
+`ready`. A script that cannot be written (an unsupported interaction, a missing tool) is set
+`unverified` with the reason rather than left pending. Then the main agent runs the pass with
+`run --todo` and reads the compact lines; it does not open the result files of passed scenarios. A pass
+that may outlast the shell's command timeout runs as a background command or group by group.
 
-Testing subagents do not fix application code during the pass. They try to reproduce a bug again from
-the described initial state and mark an unstable one as unstable. No further verification phase runs.
-Unclear product behavior goes to the main agent, who follows the
-[business questions procedure](shared/business-questions.md); a dependent fix
-waits for the answer.
+For each failing scenario read `result ID` and, when needed, its failure screenshot, and record
+`triage`: an application bug (`app`, with a finding), a script bug (`script`, back to its author), an
+environment problem (`env`, blocked) or an unstable result (`flaky`, after `run ID --repeat 3`). Tell
+the bug of the application from the environment and the test script; do not report a bug created by
+inconsistent fixtures as a product bug. Do not fix application code during the pass. Unclear product
+behavior goes to the main agent, who follows the
+[business questions procedure](shared/business-questions.md); a dependent fix waits for the answer.
 
-## 5. Results and optional fixes
+Assigned testers may run their scenario scripts through the tool and use the browser for exploration and
+diagnosis; everything else in [verification](shared/ground-rules.md#verification) stays with the main
+agent, and a click-through script is no reason to run the whole existing Playwright test suite.
 
-The tester hands over the results per the [output format](references/results.md). The main agent
-merges the outputs of the testers, removes duplicates and keeps the reproduction steps and the
-different impacts. It separates evidenced bugs from visual recommendations, open questions and
-environment limitations.
+## 5. Visual judgment
 
-In presentation mode present the findings and the coverage overview. In fix mode, after the pass hand
-the evidenced problems, reproduction, expected behavior, proposed solutions and user decisions to
-[programming](../programming/SKILL.md). Include optional visual changes only when they are in the
-permitted scope. Do not make fixes waiting on a business decision from the recommendation alone.
+The judge lists `shots --pending`, actually views each screenshot at its size and judges it per the
+[UI/UX checklist](references/scenarios.md#uiux-and-look) with `judge`. The layout hints (overflow,
+broken images, clipped text) point to places to look at; they are neither a verdict nor a replacement for
+viewing. A screenshot identical to its last judged one keeps its judgment, so a retest needs only the
+changed ones viewed, with the `.diff.png` showing what changed. An issue gets a finding or a note.
 
-After fixes repeat the affected scenarios and their links in a targeted way: the main agent runs the
-saved scripts of the affected IDs and reads their compact results, and a new short tester run judges
-the links and, where the fix touched the UI, the look. Do not resume the original tester, do not repeat
-the whole pass without reason and do not extend testing endlessly. Done means the overview of relevant
-scenarios has real results; blocked and unverified points stay explicitly listed.
+## 6. Exploration
 
-## 6. Cleanup
+When the scope has risky or poorly specified parts, one bounded exploration run may drive the browser
+interactively through headless MCP outside the scripts. Agree its budget (the screens and the time or
+number of steps) in the brief. It records what it tried with `log explore`; a relevant discovery
+becomes a new scenario with a script, so that it is repeatable. Interactive MCP is otherwise only for
+finding selectors and diagnosing a failure.
 
-Each tester closes its contexts and browser on completion and on error, ideally in `finally`, per the
+## 7. Results and optional fixes
+
+The tester hands over the results per the [output format](references/results.md); the state of the
+scenarios, screenshots and findings is in the testing folder. The main agent merges duplicate findings
+and keeps the reproduction steps and the different impacts. It separates evidenced bugs from visual
+recommendations, open questions and environment limitations.
+
+In presentation mode present the findings and the coverage overview from `status` and `findings`. In fix
+mode, after the pass hand the evidenced problems, reproduction, expected behavior, proposed solutions
+and user decisions to [programming](../programming/SKILL.md). Include optional visual changes only when
+they are in the permitted scope. Do not make fixes waiting on a business decision from the
+recommendation alone.
+
+After fixes the main agent runs the affected scenarios with `run --failed` or by their IDs, plus the
+scenarios on the same screens, and `run --todo` for results from other code; it marks a finding
+`fixed` when the fix lands and `verified` when its scenarios pass. Changed screenshots go to a new short
+judging run; do not resume the original tester, do not repeat the whole pass without reason and do not
+extend testing endlessly. Done means `next` shows nothing open in the agreed scope; blocked and
+unverified scenarios stay explicitly listed.
+
+## 8. Cleanup
+
+The tool closes the browser of each scenario run and kills what a timed-out or crashed run left behind.
+Whoever drives a browser outside it (exploration, diagnosis, own one-off scripts) closes its contexts
+and browser on completion and on error, ideally in `finally`, per the
 [browser cleanup rule](shared/ground-rules.md#browser-cleanup); after checking the processes
 terminate only your own leftovers, not the user's browser. Do not leave a browser running between
 finished passes. Revert temporary global settings and time travel; coordinate needed caches and

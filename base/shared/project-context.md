@@ -29,6 +29,7 @@ project already answers; ask only when a value is needed and neither gives a usa
 - dev_env: docs/dev-environment.md   # how to reach the dev app, test accounts, data preparation
 - handoff_prefix: myproject
 - parallel_runs: 6                    # subagent runs at the same time
+- max_parallel_browsers: 2            # headless browsers at the same time
 ```
 
 ### Plans directory
@@ -80,6 +81,15 @@ rest waits for a free slot. A lower environment limit on concurrent subagents wi
 user gives for the current run replaces it. How it is used is in
 [delegation](delegation.md#number-of-runs).
 
+### Max parallel browsers
+
+`max_parallel_browsers`, default 2. The number of headless browsers that run at the same time in one
+click-through pass; the [browser tool](browser-tool.md) enforces it for the scenario runs (`init
+--max-browsers`), and subagents driving a browser interactively count towards it. It is the
+shared-resources case of [number of runs](delegation.md#number-of-runs). Raise it only when the dev
+environment and the machine handle more browsers; a number the user gives for the current run
+replaces it.
+
 ### Handoff prefix
 
 `handoff_prefix`, default the basename of the repository root. Used in the name of the temporary
@@ -95,7 +105,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 | question tool | `AskUserQuestion` (2–4 options per question, the recommended option first with "(Recommended)") |
 | subagent | the `Agent` tool; the plugin agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | `SendMessage` to the same agent, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
-| browser | Playwright MCP (headless) or own Playwright scripts |
+| browser | scenario scripts through the [browser tool](browser-tool.md); Playwright MCP (headless) for exploration and diagnosis |
 <!-- /platform -->
 <!-- platform:codex -->
 | Capability | Codex |
@@ -103,7 +113,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 | question tool | the user-input tool when the current mode offers one; otherwise ask in the conversation and pause only work that depends on the answer |
 | subagent | spawn a subagent; the custom agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | send input to the same agent thread, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
-| browser | Playwright MCP (headless) or own Playwright scripts |
+| browser | scenario scripts through the [browser tool](browser-tool.md); Playwright MCP (headless) for exploration and diagnosis |
 <!-- /platform -->
 
 When a capability is unavailable, say so and use the fallback the skill describes; never present your
