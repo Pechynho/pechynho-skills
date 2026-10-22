@@ -22,6 +22,7 @@ OVERLAYS = ROOT / "overlays"
 PLATFORMS = ("claude", "codex")
 PLUGIN_NAME = "pechynho"
 CODEX_AGENT_PREFIX = "pechynho_"
+IGNORED_PARTS = {"__pycache__", "node_modules"}
 
 BLOCK_RE = re.compile(r"<!-- platform:(\w+) -->\n(.*?)<!-- /platform -->\n", re.S)
 LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
@@ -70,7 +71,7 @@ def add_preamble(body: str) -> str:
 
 def copy_rendered(src: Path, dst: Path, platform: str) -> None:
     for path in sorted(src.rglob("*")):
-        if path.is_dir():
+        if path.is_dir() or path.suffix == ".pyc" or IGNORED_PARTS & set(path.relative_to(src).parts):
             continue
         target = dst / path.relative_to(src)
         target.parent.mkdir(parents=True, exist_ok=True)

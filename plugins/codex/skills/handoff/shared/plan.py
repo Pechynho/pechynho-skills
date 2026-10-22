@@ -199,11 +199,16 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
         parent = task.get("parent_id")
         if parent and parent not in plan.tasks:
             errors.append(f"{where}: unknown parent {parent}")
+        ancestors = []
+        while parent in plan.tasks and parent not in ancestors and parent != tid:
+            ancestors.append(parent)
+            parent = plan.tasks[parent].get("parent_id")
         for dep in task.get("depends_on", []):
             if dep not in plan.tasks:
                 errors.append(f"{where}: unknown dependency {dep}")
-            elif dep == parent:
-                errors.append(f"{where}: a subtask must not depend on its parent {dep}")
+            elif dep in ancestors:
+                kind = "parent" if dep == ancestors[0] else "ancestor"
+                errors.append(f"{where}: a subtask must not depend on its {kind} {dep}")
         for ref in task.get("references", []):
             target = ref.split("#", 1)[0]
             if target and not (root / target).exists():
@@ -214,9 +219,17 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
     if cycle:
         errors.append("dependency cycle: " + " -> ".join(cycle))
     parents = {tid: [t["parent_id"]] for tid, t in plan.tasks.items() if t.get("parent_id") in plan.tasks}
-    cycle = find_cycle(parents)
-    if cycle:
-        errors.append("parent cycle: " + " -> ".join(cycle))
+    parent_cycle = find_cycle(parents)
+    if parent_cycle:
+        errors.append("parent cycle: " + " -> ".join(parent_cycle))
+    if not cycle and not parent_cycle:
+        # A parent is done only after its subtasks, so it waits for them like for its dependencies.
+        waits = {tid: list(edges) for tid, edges in deps.items()}
+        for tid, (parent,) in parents.items():
+            waits[parent].append(tid)
+        cycle = find_cycle(waits)
+        if cycle:
+            errors.append("cycle through dependencies and subtasks: " + " -> ".join(cycle))
 
     for phase in plan.index.get("phases", []):
         for tid in phase.get("tasks", []):
@@ -291,6 +304,8 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
                 errors.append(f"log.jsonl record {n} ({kind}): missing {field}")
         if kind == "finding" and record.get("status") not in FINDING_STATUSES:
             errors.append(f"log.jsonl record {n}: invalid finding status {record.get('status')!r}")
+        if kind == "finding" and "id" in record and not isinstance(record["id"], str):
+            errors.append(f"log.jsonl record {n}: finding id must be a string, got {record['id']!r}")
         if kind in ("validation_plan", "validation"):
             passes = validation_passes(records[:n - 1])
             errors += [f"log.jsonl record {n}: {e}" for e in check_validation(plan, record, passes)]
@@ -406,7 +421,13 @@ def ready(plan: Plan, progress: dict) -> tuple[list[str], list[str]]:
     for tid, task in plan.tasks.items():
         if plan.status_of(progress, tid) != "pending":
             continue
-        if any(plan.status_of(progress, d) != "done" for d in task.get("depends_on", [])):
+        # A subtask also waits for the dependencies of its parents.
+        deps, parent, seen = list(task.get("depends_on", [])), task.get("parent_id"), {tid}
+        while parent in plan.tasks and parent not in seen:
+            seen.add(parent)
+            deps += plan.tasks[parent].get("depends_on", [])
+            parent = plan.tasks[parent].get("parent_id")
+        if any(plan.status_of(progress, d) != "done" for d in deps):
             continue
         children = plan.children.get(tid)
         if not children:
@@ -431,7 +452,9 @@ def cmd_status(plan: Plan, args) -> None:
     leaves = plan.leaves()
     counts = {s: 0 for s in TASK_STATUSES}
     for tid in leaves:
-        counts[plan.status_of(progress, tid)] += 1
+        # An invalid status is counted under its own name; validate reports it.
+        status = plan.status_of(progress, tid)
+        counts[status] = counts.get(status, 0) + 1
     active = len(leaves) - counts["cancelled"]
     pct = round(100 * counts["done"] / active) if active else 0
     print("tasks: " + ", ".join(f"{s} {n}" for s, n in counts.items() if n) + f"  ({pct}% done)")
@@ -551,16 +574,22 @@ def parse_value(raw: str):
         return raw
 
 
+def log_field(pair: str) -> tuple[str, object]:
+    key, sep, value = pair.partition("=")
+    if not sep or not key:
+        raise argparse.ArgumentTypeError(f"expected key=value, got {pair!r}")
+    if key in ("at", "type"):
+        raise argparse.ArgumentTypeError(f"{key} is set by the tool")
+    return key, parse_value(value)
+
+
 def cmd_log(plan: Plan, args) -> None:
-    record = {"at": now(), "type": args.type}
-    for pair in args.fields:
-        key, sep, value = pair.partition("=")
-        if not sep or not key:
-            raise SystemExit(f"expected key=value, got {pair!r}")
-        record[key] = parse_value(value)
+    record = {"at": now(), "type": args.type, **dict(args.fields)}
     missing = [f for f in LOG_REQUIRED[args.type] if f not in record]
     if missing:
         raise Refused(f"{args.type} needs: {', '.join(missing)}")
+    if args.type == "finding" and not isinstance(record["id"], str):
+        raise Refused(f"finding id must be a string, got {record['id']!r}")
     if args.type == "finding" and record["status"] not in FINDING_STATUSES:
         raise Refused(f"finding status must be one of {', '.join(FINDING_STATUSES)}")
     if args.type in ("validation_plan", "validation"):
@@ -575,7 +604,8 @@ def findings(plan: Plan) -> list[dict]:
     """The current state of each finding: its log records merged in order, later fields win."""
     merged: dict[str, dict] = {}
     for record in plan.log():
-        if record.get("type") == "finding":
+        # A record without a usable ID is reported by validate and left out here.
+        if record.get("type") == "finding" and isinstance(record.get("id"), str):
             merged.setdefault(record["id"], {}).update(record)
     return list(merged.values())
 
@@ -645,7 +675,7 @@ def main() -> None:
     p.add_argument("--reason", help="required for cancelled")
     p = sub.add_parser("log")
     p.add_argument("type", choices=[t for t in LOG_REQUIRED if t != "task"])
-    p.add_argument("fields", nargs="*", help="key=value; values are parsed as JSON when possible")
+    p.add_argument("fields", nargs="*", type=log_field, help="key=value; values are parsed as JSON when possible")
     p = sub.add_parser("findings")
     p.add_argument("--all", action="store_true")
     p = sub.add_parser("validations")

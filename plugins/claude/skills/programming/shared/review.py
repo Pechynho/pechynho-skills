@@ -259,6 +259,10 @@ def size(info: dict) -> int:
     return info["added"] + info["deleted"]
 
 
+def chunk_lines(files: list[str], diff: dict[str, dict]) -> int:
+    return sum(size(diff[p]) for p in files if p in diff)
+
+
 def pack(files: list[dict], budget: int, depth: int = 0) -> list[list[dict]]:
     """Group files by directory so that each group stays within the line budget where possible."""
     if sum(size(f) for f in files) <= budget:
@@ -434,9 +438,10 @@ def single(review: Review, groups: list[str]) -> None:
     if not groups:
         raise Refused("--single needs --groups G1=\"Perspective;Perspective\" ...")
     s = review.state
-    files = sorted(parse_diff(review.diff_path))
-    s["chunks"]["C01"] = {"title": "whole diff", "files": files, "kind": "logic", "risk": "medium",
-                          "treatment": "full"}
+    diff = parse_diff(review.diff_path)
+    files = sorted(diff)
+    s["chunks"]["C01"] = {"title": "whole diff", "files": files, "lines": chunk_lines(files, diff), "kind": "logic",
+                          "risk": "medium", "treatment": "full"}
     for spec in groups:
         gid, sep, names = spec.partition("=")
         perspectives = [n.strip() for n in names.split(";") if n.strip()]
@@ -495,9 +500,12 @@ def cmd_chunks(review: Review, args) -> None:
 
 def cmd_chunk(review: Review, args) -> None:
     chunk = review.state["chunks"].get(args.id, {})
-    chunk.update({"title": args.title, "risk": args.risk, "treatment": args.treatment})
+    chunk["title"] = args.title
+    chunk["risk"] = args.risk or chunk.get("risk", "medium")
+    chunk["treatment"] = args.treatment or chunk.get("treatment", "full")
     if args.files is not None:
         chunk["files"] = sorted(set(args.files))
+        chunk["lines"] = chunk_lines(chunk["files"], parse_diff(review.diff_path))
     chunk.setdefault("files", [])
     if args.integration:
         chunk["kind"] = "integration"
@@ -835,6 +843,8 @@ def cmd_refresh(review: Review, args) -> None:
         chunk["files"] = [f for f in chunk.get("files", []) if f not in removed]
     if single:
         s["chunks"]["C01"]["files"] = sorted(local["C01"] - set(removed))
+    for chunk in s["chunks"].values():
+        chunk["lines"] = chunk_lines(chunk["files"], new)
     new_chunk = None
     if added and not single:
         numbers = [int(m.group(1)) for m in (re.fullmatch(r"C(\d+)", c) for c in s["chunks"]) if m]
@@ -926,13 +936,17 @@ def parse_value(raw: str):
         return raw
 
 
+def log_field(pair: str) -> tuple[str, object]:
+    key, sep, value = pair.partition("=")
+    if not sep or not key:
+        raise argparse.ArgumentTypeError(f"expected key=value, got {pair!r}")
+    if key in ("at", "type"):
+        raise argparse.ArgumentTypeError(f"{key} is set by the tool")
+    return key, parse_value(value)
+
+
 def cmd_log(review: Review, args) -> None:
-    record = {"type": args.type}
-    for pair in args.fields:
-        key, sep, value = pair.partition("=")
-        if not sep or not key:
-            raise SystemExit(f"expected key=value, got {pair!r}")
-        record[key] = parse_value(value)
+    record = {"type": args.type, **dict(args.fields)}
     missing = [f for f in LOG_REQUIRED[args.type] if f not in record]
     if missing:
         raise Refused(f"{args.type} needs: {', '.join(missing)}")
@@ -961,8 +975,8 @@ def main() -> None:
     p.add_argument("id")
     p.add_argument("--title", required=True)
     p.add_argument("--files", nargs="*")
-    p.add_argument("--risk", choices=RISKS, default="medium")
-    p.add_argument("--treatment", choices=TREATMENTS, default="full")
+    p.add_argument("--risk", choices=RISKS, help="medium for a new chunk; kept when omitted")
+    p.add_argument("--treatment", choices=TREATMENTS, help="full for a new chunk; kept when omitted")
     p.add_argument("--integration", action="store_true", help="cross-chunk cells; ready after all local cells")
     p.add_argument("--reason")
     p = sub.add_parser("group")
@@ -1021,7 +1035,7 @@ def main() -> None:
     sub.add_parser("validate")
     p = sub.add_parser("log")
     p.add_argument("type", choices=list(LOG_REQUIRED))
-    p.add_argument("fields", nargs="*", help="key=value; values are parsed as JSON when possible")
+    p.add_argument("fields", nargs="*", type=log_field, help="key=value; values are parsed as JSON when possible")
     args = parser.parse_args()
 
     review = Review(args.review_dir)

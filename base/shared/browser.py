@@ -136,7 +136,11 @@ def pid_alive(pid) -> bool:
         return True
     except OSError:
         return False
-    return True
+    # A killed child of ours stays a zombie until it is reaped; it is gone for our purposes.
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return True
 
 
 def cmdline(pid: int) -> str:
@@ -379,9 +383,21 @@ def validate(t: Testing) -> tuple[list[str], list[str]]:
 # --- commands ---------------------------------------------------------------------------------
 
 
+def check_limits(config: dict) -> None:
+    if config.get("max_browsers", 1) < 1:
+        raise Refused("max_browsers must be at least 1")
+    if config.get("timeout", 1) < 1:
+        raise Refused("timeout must be at least 1 second")
+    if not 0 <= config.get("diff_threshold", 0) <= 1:
+        raise Refused("diff_threshold is a share of the pixels, from 0 to 1")
+    if not 0 <= config.get("diff_tolerance", 0) <= 255:
+        raise Refused("diff_tolerance is a per-channel difference, from 0 to 255")
+
+
 def cmd_init(t: Testing, args) -> None:
     if t.state_path.exists():
         raise Refused("testing.json already exists; continue with status")
+    check_limits({"max_browsers": args.max_browsers, "timeout": args.timeout})
     t.root.mkdir(parents=True, exist_ok=True)
     for folder in ("scenarios", "results", "findings"):
         (t.root / folder).mkdir(exist_ok=True)
@@ -430,14 +446,7 @@ def cmd_config(t: Testing, args) -> None:
     if not changes:
         print(json.dumps(c, indent=2, ensure_ascii=False))
         return
-    if changes.get("max_browsers", 1) < 1:
-        raise Refused("max_browsers must be at least 1")
-    if changes.get("timeout", 1) < 1:
-        raise Refused("timeout must be at least 1 second")
-    if not 0 <= changes.get("diff_threshold", 0) <= 1:
-        raise Refused("diff_threshold is a share of the pixels, from 0 to 1")
-    if not 0 <= changes.get("diff_tolerance", 0) <= 255:
-        raise Refused("diff_tolerance is a per-channel difference, from 0 to 255")
+    check_limits(changes)
     if "viewports" in changes:
         used = sorted({v for sc in t.state["scenarios"].values() for v in sc.get("viewports") or []
                        if v not in changes["viewports"]})
@@ -539,7 +548,7 @@ def select_for_run(t: Testing, args, fingerprint: str | None) -> list[str]:
     if args.ids:
         for sid in args.ids:
             t.scenario(sid)
-        chosen = list(args.ids)
+        chosen = sorted(dict.fromkeys(args.ids), key=natural)
     else:
         chosen = t.ids(args.group)
         if args.todo:
@@ -760,6 +769,8 @@ class Runner:
             if diff is not None:
                 entry["diff"] = round(diff.get("ratio", 1), 6)
                 entry["diff_pixels"] = diff.get("pixels")
+                if diff.get("size_changed"):
+                    entry["size_changed"] = diff["size_changed"]
                 if diff.get("image"):
                     entry["diff_image"] = f"{run_dir}/{diff['image']}"
             judged = entry["judged"]
@@ -915,6 +926,8 @@ def shot_line(t: Testing, sid: str, key: str, shot: dict) -> str:
     line = f"{sid:<8} {key:<28} {shot['judgment']:<7} {t.root / shot['path']}"
     if shot.get("inherited"):
         line += f" (unchanged since judged, {shot.get('diff_pixels') or 0} px differ)"
+    elif shot.get("size_changed"):
+        line += f" (size changed {shot['size_changed']} against the one judged {shot['judged']['judgment']}"
     elif shot.get("diff") is not None:
         line += f" ({shot.get('diff_pixels', '?')} px = {shot['diff']:.3%} differ from the one judged {shot['judged']['judgment']}"
         line += f", diff image {t.root / shot['diff_image']})" if shot.get("diff_image") else ")"

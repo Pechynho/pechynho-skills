@@ -16,7 +16,7 @@ python3 <skill directory>/shared/plan.py {plans_dir}/{feature} <command>
 | `init` | Create `progress.json` and `log.jsonl` for a new tasklist. |
 | `validate` | Check JSON, unique IDs, parents, dependencies and their cycles, references, coverage of the PRD criteria, the progress and the log. Exit code 1 on an error. |
 | `status` | Derived overview: phase, counts, blocked and running tasks, open questions, unresolved findings, ready tasks. |
-| `next` | Tasks whose dependencies are done, and parents whose subtasks are finished and wait for integration. |
+| `next` | Tasks whose dependencies, including those of their parents, are done, and parents whose subtasks are finished and wait for integration. |
 | `show T-001` | One task with its status, dependencies, subtasks, consumers and log records; enough for a brief. |
 | `set T-001 in_progress --owner worker` | Change a status; also `blocked --blocker Q-002`, `done --evidence "…"`, `cancelled --reason "…"`. Refuses `done` with unfinished subtasks or dependencies. |
 | `log check subject="make test" result=pass revision=abc123` | Append a record; types `check`, `finding`, `validation_plan`, `validation`, `checkpoint`, `note`. Values are parsed as JSON when possible (`tasks='["T-001"]'`). |

@@ -2,6 +2,9 @@
 
 - Edit only `base/` and `overlays/`. `plugins/` is generated: run `scripts/build.py` after every change
   and commit the result together with the source. `scripts/build.py --check` must pass.
+- Every change to a tool in `base/shared/` or `scripts/` comes with tests in `tests/`;
+  `python3 -m unittest` and `node --test tests/*.test.mjs` must pass. Tests use only the standard
+  library and Node's built-ins, like the tools themselves.
 - Everything in this repository is written in English.
 - Keep the skills project-agnostic. Project-specific values go through
   `base/shared/project-context.md` (settings with defaults), never hard-coded paths or commands.

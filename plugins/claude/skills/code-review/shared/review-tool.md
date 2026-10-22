@@ -38,7 +38,7 @@ only after all other cells are closed.
 | `init … --single --groups G1="Correctness and regressions;Testability and risk coverage" G2="…"` | A review one reviewer run covers: write `diff.patch` first, then one call creates the chunk `C01` with the whole diff, the groups and their cells. Skip `triage`, `chunks`, `group` and `cell`. |
 | `triage [--chunk-lines N]` | Parse `diff.patch`, classify files (logic, lockfile, vendor, generated, build output, rename only, binary) and propose chunks by directory within the line budget (2500 by default) into `triage.json`. A suggestion only. |
 | `chunks triage.json` | Load the edited proposal. |
-| `chunk ID --title T [--files …] [--risk R] [--treatment T] [--integration] [--reason R]` | Add or change one chunk; `excluded` needs a reason. |
+| `chunk ID --title T [--files …] [--risk R] [--treatment T] [--integration] [--reason R]` | Add or change one chunk; omitted options keep their values (a new chunk is `medium`, `full`); `excluded` needs a reason. |
 | `group G1 --perspectives "…" "…"` | Define a perspective group by the names in the [perspectives](../../code-review/references/perspectives.md). |
 | `cell C03 G1 G2` / `omit C03 G4 --reason "…"` | Assign groups to a chunk, or record why a group is not relevant to it. |
 | `estimate` | Chunks, files and lines by treatment, open cells and the waves still needed. |

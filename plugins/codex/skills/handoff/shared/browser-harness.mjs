@@ -269,7 +269,7 @@ export async function run(body, options = {}) {
 
   const t = { url, step, check, shot, out: OUT, scenario: SCENARIO, baseUrl: BASE_URL, viewport: VIEWPORTS[0], note: (text) => result.notes.push(String(text)) };
   const passes = options.perViewport ? VIEWPORTS.map((v) => [v]) : [VIEWPORTS];
-  let prepared = false;
+  let cleanupDue = false;
   try {
     const playwright = loadPlaywright();
     // A browser server exposes the browser's pid, so browser.py can kill a leftover browser after a crash.
@@ -279,15 +279,15 @@ export async function run(body, options = {}) {
     for (const viewports of passes) {
       passViewports = viewports;
       prefix = options.perViewport ? `[${viewports[0].name}] ` : '';
+      cleanupDue = Boolean(options.cleanup);
       if (options.prepare) {
-        prepared = true;
         await step('prepare', () => options.prepare(t));
       }
       await openPage(viewports[0]);
       Object.assign(t, { page, context, browser, viewport: viewports[0] });
       await body(t);
       if (options.cleanup) {
-        prepared = false;
+        cleanupDue = false;
         await step('cleanup', () => options.cleanup(t));
       }
       if (passes.length > 1) {
@@ -314,7 +314,7 @@ export async function run(body, options = {}) {
       result.failure_url = page.url();
       await page.screenshot({ path: path.join(OUT, 'failure.png'), fullPage: true }).catch(() => { result.failure_shot = null; });
     }
-    if (prepared && options.cleanup) {
+    if (cleanupDue) {
       await step('cleanup', () => options.cleanup(t)).catch((e) => result.notes.push(`cleanup failed: ${firstLine(e)}`));
     }
   } finally {
