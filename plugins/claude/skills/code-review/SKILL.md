@@ -42,6 +42,12 @@ stash or branch change. Write the reviewed diff once into the
 same diff instead of each computing it. If the reviewed code changes during the review, update the
 affected findings and verify them against the new state.
 
+Track the review in the same folder with the [review tool](shared/review-tool.md). A diff a reviewer
+covers in one run is one chunk: `init --single` with the perspective groups of step 2. When a reviewer
+cannot cover its perspectives across the whole diff in one run, the review is large: `init`, `triage`
+and `chunks` cut the diff into coherent chunks and [large reviews](references/large-reviews.md) apply
+on top of the steps below.
+
 ## 2. Split the perspectives among review subagents
 
 Read the [perspectives](references/perspectives.md) and the [output format](references/findings.md).
@@ -51,20 +57,23 @@ Split the review primarily by perspective: most reviewers take one or more relat
 the whole reviewed change. A smaller part of the slots may go to specific modules or scenarios when their
 size, complexity or risk justifies a separate check; this does not replace the responsibility for
 covering all relevant perspectives. Before launching, state the assigned perspectives, the scope and
-the reason for any module assignments.
+the reason for any module assignments. Record the perspective groups with `group`, their assignment
+to chunks with `cell` and every omission with `omit`; hand cells to a reviewer with `start`.
 
-A cross-cutting reviewer systematically goes through the whole agreed diff including new files and
-applies its perspectives to all relevant changes; the goal is complete coverage, not sampling of risky
-spots. Risky parts first and deepest, then the rest. If a reviewer cannot cover part of the change, it
-names the files or sections and the orchestrator arranges a follow-up; until then that coverage counts
-as incomplete.
+A cross-cutting reviewer systematically goes through its whole cell, the whole agreed diff or in a
+large review its chunk, including new files, and applies its perspectives to all relevant changes; the
+goal is complete coverage, not sampling of risky spots. Risky parts first and deepest, then the rest.
+If a reviewer cannot cover part of its cell, it names the files or sections and the orchestrator
+records the cell as `partial` and arranges a follow-up; until then that coverage counts as incomplete.
 
-**X is the maximum number of review subagents** unless the user requires an exact number. Without X,
-choose a reasonable number by scope and state the split. One reviewer may take several related
-perspectives; the number of perspectives is neither the number of agents nor a required number of
-findings. Respect the available slots and work in batches; verification and synthesis are later phases,
-not a requirement to run everything at once. Model choice and the case of unavailable subagents follow
-[delegation](shared/delegation.md).
+**X is the maximum number of review subagents** unless the user requires an exact number. In a large
+review X limits the parallel reviewers of one wave, not the total: the total number of reviewer runs is
+in the estimate the user approves per [large reviews](references/large-reviews.md#4-estimate-and-approval),
+so say there that it exceeds X. Without X, choose a reasonable number by scope
+and state the split. One reviewer may take several related perspectives; the number of perspectives is
+neither the number of agents nor a required number of findings. Respect the available slots and work in
+batches; verification and synthesis are later phases, not a requirement to run everything at once.
+Model choice and the case of unavailable subagents follow [delegation](shared/delegation.md).
 
 Give every reviewer:
 
@@ -84,7 +93,9 @@ preferences without a concrete benefit. Reviewers check by reading; requests for
 static analysis, tests or builds go to the main agent per the
 [ground rules](shared/ground-rules.md#verification).
 
-Keep stable finding IDs and traceable decisions.
+Keep stable finding IDs and traceable decisions. When a reviewer returns, write each finding verbatim
+into `findings/{ID}.md`, index it with `finding` and record the cell's coverage with `set`; reviewers
+stay read-only, the orchestrator keeps the record.
 
 ## 3. Resolve new business questions
 
@@ -96,8 +107,9 @@ that depend on an answer wait. Elapsed time is not a decision.
 ## 4. Independent verification
 
 The number of verifiers follows the number and difficulty of the findings: roughly one verifier per
-four findings, at least one when there is anything to verify and at most three. With no findings skip
-the verification phase. Do not invent findings to give verifiers work. Every finding has a primary
+four findings, at least one when there is anything to verify and at most three per batch of findings;
+a large review verifies each wave's findings as they arrive. With no findings skip the verification
+phase. Do not invent findings to give verifiers work. Every finding has a primary
 verifier; a critical or disputed finding is also checked by a second one. A verifier is never the sole
 verifier of its own finding.
 
@@ -111,11 +123,14 @@ does not change undecided product behavior.
 
 Each finding gets **confirmed**, **refuted** or **undecidable** with evidence and reasoning. Lack of
 information is not a refutation. Resolve a disagreement between verifiers with evidence or leave it
-explicitly open; a business decision goes to the user.
+explicitly open; a business decision goes to the user. Append each verification to the finding's file
+and record it with `verify`; a resolved dispute, a pending decision or a merge with `resolve`.
 
 ## 5. Synthesis by one subagent
 
-One further subagent receives all review outputs, verifications, user decisions and the coverage map.
+One further subagent receives all review outputs, verifications, user decisions and the coverage map:
+the paths of the finding files, the `findings --all` index and the `coverage` output. A large review
+whose findings do not fit one run synthesizes in two levels per [large reviews](references/large-reviews.md#6-synthesis).
 It groups duplicates by common cause and keeps all original IDs, locations and impacts; a similar
 proposed fix alone is no reason to merge unrelated bugs. It separates confirmed bugs, optional
 improvements, open questions and refuted findings, does not promote an unverified finding to confirmed
@@ -123,9 +138,9 @@ and returns an unverified new finding to verification. It orders the bugs by imp
 recommended solution. Refuted findings stay traceable; a brief summary for the user is enough unless
 the full output is requested.
 
-The main agent checks the synthesis against the assignment and presents the final scope, findings,
-open decisions and the verification actually performed including limitations. "No confirmed findings"
-is not a guarantee of correctness.
+The main agent runs `validate` and `coverage`, checks the synthesis against the assignment and
+presents the final scope, findings, open decisions and the verification actually performed including
+limitations. "No confirmed findings" is not a guarantee of correctness.
 
 ## 6. Optional fixes
 

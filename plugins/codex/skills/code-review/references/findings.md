@@ -1,7 +1,8 @@
 # Outputs and evidence
 
 The format is shared by reviewers, verifiers and the synthesis regardless of how the information is
-passed. Use brief structured text; files or a particular serialization format are not required.
+passed. Use brief structured text; no particular serialization format is required. The orchestrator
+stores each returned finding as one file per the [review tool](../shared/review-tool.md).
 
 ## Reviewer finding
 
