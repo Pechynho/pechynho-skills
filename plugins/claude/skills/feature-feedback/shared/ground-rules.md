@@ -57,13 +57,17 @@ stricter wins; a project rule that relaxes one of these rules applies only when 
 - A subagent may write tests too; running them is controlled exclusively by the main agent per
   [Verification](#verification).
 
-## Reuse and DRY
+## Reuse, DRY and abstractions
 
 - Before copying code, configuration, templates or test setup, look for an existing shared solution
   and consider extracting the repeated rule into one place.
 - Share code that represents the same rule and changes for the same reason. Similar-looking code
   with different responsibilities need not become one abstraction; keep extraction within the task's
   scope.
+- Introduce a design pattern when a concrete need in the task calls for it, for example a strategy for
+  several interchangeable variants, an adapter or facade to isolate an external API, a builder for
+  a complex construction. Prefer the patterns the project already uses. Do not add an abstraction for
+  a single implementation or a hypothetical future case.
 
 ## Translations
 
