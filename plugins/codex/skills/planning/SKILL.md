@@ -101,7 +101,31 @@ application tests, linters or builds. Do not mark the plan as ready while a nece
 missing, a blocking finding is unresolved or the required independent validation could not be performed.
 Record the limitations transparently.
 
-## 5. Hand over the result
+## 5. Offer mockups of a visual result
+
+Only when the feature changes something the user sees (a screen, a component, an e-mail, a printed
+document), ask with the question tool whether to make mockups so they can picture the result before
+the implementation. Skip this step for a change without a visual result and do not ask about it.
+When the user wants them, ask about the scope in the same batch, for example:
+
+- **Key screens (Recommended):** one mockup per main screen of the scenarios, in its default state.
+- **Screens and states:** also the empty, loading, error and permission states and the narrow layout.
+- **One screen:** only the screen named by the user, as a quick illustration.
+
+Build the mockups with the [mockup capability](shared/project-context.md#tools): self-contained static
+HTML with sample data, no application code and no backend. Follow the existing design of the
+application where the code shows it. A mockup illustrates the confirmed PRD; it does not decide
+anything. Mark an undecided point as a visible placeholder instead of guessing it, and number the
+screens by the PRD scenarios and criteria they show. A subagent may write the pages; publishing them
+and showing them to the user stays with the main agent.
+
+Keep the source files in `{plans_dir}/{feature}/mockups/` and link them, and a published link where
+there is one, from the README. Feedback on the mockups that changes the behavior is a business
+decision: record it in the decisions, reflect it in the PRD, the chapters and the tasks, and have the
+affected parts re-checked per [validation](#4-validate-independently-and-fix). A purely visual
+adjustment only updates the mockup.
+
+## 6. Hand over the result
 
 Summarize the goal, the agreed scope, the documents, the stages, the validation result and any open
 points. Store the output in `{plans_dir}/{feature}/`; the indexes must reach all chapters and tasks.

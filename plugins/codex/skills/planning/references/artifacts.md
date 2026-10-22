@@ -18,6 +18,8 @@
 │   ├── 02-backend.json
 │   ├── 03-ui.json
 │   └── 04-testing-and-rollout.json
+├── mockups/
+│   └── 01-member-list.html
 ├── progress.json
 └── log.jsonl
 ```
@@ -38,7 +40,11 @@ and their resolution with stable FB IDs; the status of implementation tasks stil
 ## Content of the Markdown documents
 
 - **README.md:** a short goal and scope, an overview of stages and links to the PRD, decisions, all
-  chapters, the JSON index and the progress. Do not duplicate the status and task counts by hand.
+  chapters, the JSON index, the progress and any mockups. Do not duplicate the status and task counts
+  by hand.
+- **mockups/*.html:** only when the user asked for mockups per
+  [planning](../SKILL.md#5-offer-mockups-of-a-visual-result); static illustrations of the PRD, not a
+  specification. Where the PRD and a mockup differ, the PRD holds.
 - **prd.md (Product Requirements Document):** for whom, why and what we build; scenarios, business
   rules, included and postponed scope, errors and exceptions, constraints and measurable or observable
   acceptance criteria with stable IDs `AC-001`. For rules state the source of the user decision.

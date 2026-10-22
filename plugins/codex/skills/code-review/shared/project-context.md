@@ -105,6 +105,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 | subagent | spawn a subagent; the custom agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | send input to the same agent thread, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
 | browser | scenario scripts through the [browser tool](browser-tool.md); Playwright MCP (headless) for exploration and diagnosis |
+| mockup | a self-contained local HTML file the user opens in a browser; give them its absolute path |
 
 When a capability is unavailable, say so and use the fallback the skill describes; never present your
 own work as the result of a missing independent step.

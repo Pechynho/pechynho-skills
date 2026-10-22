@@ -106,6 +106,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 | subagent | the `Agent` tool; the plugin agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | `SendMessage` to the same agent, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
 | browser | scenario scripts through the [browser tool](browser-tool.md); Playwright MCP (headless) for exploration and diagnosis |
+| mockup | the `Artifact` tool: publish the self-contained HTML page as a private artifact (load the `artifact-design` skill first) and give the user its link; when the tool is unavailable, fall back to a local HTML file |
 <!-- /platform -->
 <!-- platform:codex -->
 | Capability | Codex |
@@ -114,6 +115,7 @@ The skills name capabilities, not exact tool names. Map them to the current envi
 | subagent | spawn a subagent; the custom agents of this collection are listed in [delegation](delegation.md#agents-of-this-collection) |
 | follow-up to a finished subagent | send input to the same agent thread, only within the window described in [delegation](delegation.md#one-assignment-per-run) |
 | browser | scenario scripts through the [browser tool](browser-tool.md); Playwright MCP (headless) for exploration and diagnosis |
+| mockup | a self-contained local HTML file the user opens in a browser; give them its absolute path |
 <!-- /platform -->
 
 When a capability is unavailable, say so and use the fallback the skill describes; never present your
