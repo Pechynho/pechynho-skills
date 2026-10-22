@@ -615,6 +615,66 @@ class RunTest(BrowserCase):
         self.assertEqual(self.sc("S1")["outcome"], "passed")
         self.assertEqual(self.sc("S2")["outcome"], "passed")
 
+    def test_wait_gives_up_on_browsers_held_by_another_process(self):
+        self.ok("config", "--max-browsers", "1")
+        for sid, group in (("S1", "g1"), ("S2", "g1"), ("S9", "g2")):
+            self.scenario(sid, group)
+            self.script(sid, PASS)
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        state = self.state()
+        # A live process other than the run holds the only browser.
+        state["scenarios"]["S9"]["running"] = {"pid": other.pid, "run": "r000", "at": "2026-01-01T00:00:00Z",
+                                               "node_pid": None, "dir": None}
+        self.save_state(state)
+        started = time.time()
+        self.refused("run", "S1", "S2", "--wait", "1", pattern=r"busy: other runs held every browser for more than 1s; "
+                                                                r"not run, keeping their previous outcome: S1 S2")
+        self.assertLess(time.time() - started, 20)
+        for sid in ("S1", "S2"):
+            sc = self.sc(sid)
+            self.assertEqual((sc["outcome"], sc["last_run"], sc["running"]), ("pending", None, None))
+        [record] = self.log("run_busy")
+        self.assertEqual((record["run"], record["not_run"]), ("r001", ["S1", "S2"]))
+        self.assertEqual(self.sc("S9")["running"]["run"], "r000", "the other process keeps its browser")
+
+    def test_busy_keeps_the_failure_of_a_group_that_was_running(self):
+        self.ok("config", "--max-browsers", "2")
+        slow_fail = "await page.goto(url('/ok'));\nawait page.waitForTimeout(2500);\n" + FAIL_CHECK
+        for sid, group in (("S1", "g1"), ("S2", "g2"), ("S9", "g3")):
+            self.scenario(sid, group)
+            self.script(sid, slow_fail)
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        state = self.state()
+        state["scenarios"]["S9"]["running"] = {"pid": other.pid, "run": "r000", "at": "2026-01-01T00:00:00Z",
+                                               "node_pid": None, "dir": None}
+        self.save_state(state)
+        result = self.refused("run", "S1", "S2", "--wait", "1", pattern=r"busy: .*: S[12]$")
+        ran, waited = ("S1", "S2") if self.sc("S1")["last_run"] else ("S2", "S1")
+        self.assertRegex(result.stdout, rf"(?m)^{ran}\s+FAILED")
+        self.assertEqual((self.sc(ran)["outcome"], self.sc(ran)["last_run"]["status"]), ("failing", "failed"),
+                         "the group that held a browser is recorded, not interrupted")
+        self.assertEqual((self.sc(waited)["outcome"], self.sc(waited)["last_run"]), ("pending", None))
+        self.assertEqual(self.log("run_busy")[0]["not_run"], [waited])
+
+    def test_wait_does_not_stop_a_run_that_queues_its_own_groups(self):
+        self.ok("config", "--max-browsers", "1")
+        for sid, group in (("S1", "g1"), ("S2", "g2"), ("S3", "g3")):
+            self.scenario(sid, group)
+            self.script(sid, SLOW)
+        result = self.ok("run", "S1", "S2", "S3", "--wait", "0")
+        self.assertIn("summary: 3 passed", result.stdout)
+        self.assertEqual(max_overlap(self.browser_events()), 1)
+        self.assertEqual(self.log("run_busy"), [])
+
+    def test_wait_must_not_be_negative(self):
+        self.scenario("S1")
+        self.script("S1", PASS)
+        self.refused("run", "S1", "--wait", "-1", pattern="--wait must not be negative")
+
     def test_an_interrupted_run_keeps_the_previous_outcome(self):
         self.scenario("S1")
         self.script("S1", HANG)
@@ -1116,6 +1176,22 @@ class HelpersTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.m = load_browser_module()
+
+    def test_a_scenario_stopped_before_its_last_repeat_is_not_recorded(self):
+        def group(repeat, claims, stop=False):
+            runner = self.m.Runner(None, "r001", None, repeat)
+            left = iter(claims)
+            recorded = []
+            runner.claim = lambda sid: next(left)
+            runner.attempt = lambda sid, n: (runner.stop.set() if stop else None) or {"status": "passed"}
+            runner.release = lambda sid: None
+            runner.record = lambda sid, attempts: recorded.append((sid, len(attempts)))
+            runner.group(["S1"])
+            return recorded
+
+        self.assertEqual(group(3, [True, True, True]), [("S1", 3)])
+        self.assertEqual(group(3, [True, False]), [], "busy after the first attempt")
+        self.assertEqual(group(3, [True, False], stop=True), [("S1", 1)], "an interrupted run records the attempt")
 
     def test_parse_viewports(self):
         self.assertEqual(self.m.parse_viewports(["desktop=1440x900", "phone-s=320x568:mobile"]), {

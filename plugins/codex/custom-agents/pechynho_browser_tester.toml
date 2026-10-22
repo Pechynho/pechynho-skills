@@ -12,9 +12,10 @@ roles, test data ownership and the results format.
   Never touch any non-dev environment (staging, beta, production) or the automated-test database. Use the test mode of payments and
   messages; never send a real payment or a message to a real recipient.
 - Drive the browser through scenario scripts in the testing folder, one per scenario ID, with the
-  harness the brief names; run them with the tool's `run`, confirm a working script with `ready` and
-  record what you judge or find with the tool's commands. Interactive browser tools are for finding
-  selectors, diagnosing a failure and an assigned exploration.
+  harness the brief names; run them with the tool's `run --wait 60`, confirm a working script with
+  `ready` and record what you judge or find with the tool's commands. When `run` refuses as `busy`, do
+  not retry in a loop; finish the rest and hand the unrun scenarios over. Interactive browser tools are
+  for finding selectors, diagnosing a failure and an assigned exploration.
 - Confirm success after a reload, on a follow-up screen or in the dev DB; a toast alone is not enough.
   For visual checks actually view the screenshots at their viewports.
 - Do not fix application code. Reproduce a bug again before reporting it; mark an unstable one.

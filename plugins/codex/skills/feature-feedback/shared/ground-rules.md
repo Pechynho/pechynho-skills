@@ -1,9 +1,10 @@
 # Ground rules
 
 These rules apply inside every skill of this collection. The skills rely on them and do not repeat
-them. The project's own instructions (see [project context](project-context.md)) apply on top of them:
-a project rule that is stricter wins; a project rule that relaxes one of these rules applies only when
-it says so explicitly.
+them. Every skill carries the same copy of the `shared/` files; read each of them once per session, not
+again under another skill's path, unless the context was summarized since. The project's own
+instructions (see [project context](project-context.md)) apply on top of them: a project rule that is
+stricter wins; a project rule that relaxes one of these rules applies only when it says so explicitly.
 
 ## Language
 
@@ -37,6 +38,9 @@ it says so explicitly.
   static analysis, formatters and builds remain exclusive to the main agent.
 - Run checks after finishing the work or a larger coherent part. Choose the relevant tools and scope by
   the change; do not run them after every small edit.
+- Run a check that takes minutes as a background command and process the handovers of other runs
+  meanwhile; read only its summary and failures, per
+  [working with tool output](#working-with-tool-output).
 - The main agent coordinates subagents' requests, merges identical checks and passes the results back.
   When debugging a specific failure, use a targeted run instead of repeating the whole suite.
 - Before finishing, satisfy the project's checks (see [project context](project-context.md#checks)).

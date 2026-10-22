@@ -92,9 +92,9 @@ context grows with each call. Short, bounded runs are also more reliable than lo
   the rest. The count is a guide: a few large outputs weigh as much as dozens of small ones, so
   [working with tool output](ground-rules.md#working-with-tool-output) applies throughout.
   Plan tasks are sized for this per [task size](../../planning/references/artifacts.md#task-size).
-- Resume a finished subagent only within a few minutes, while its cache is alive, and only for a small
-  follow-up of the same assignment: a clarification of its result or a fix of a failure in what it just
-  delivered. A run resumed after the cache lifetime writes its whole context to the cache again at the
+- Resume a finished subagent only within about five minutes, while its cache is alive, and only for a
+  small follow-up of the same assignment: a clarification of its result or a fix of a failure in what it
+  just delivered. A run resumed after the cache lifetime writes its whole context to the cache again at the
   higher price and keeps growing from that size. Do not resume one for the next round or after a longer
   pause; brief a new run with the current diff, the findings or scenarios and the relevant files.
 - A subagent never waits: no `sleep` loops, no polling of files or processes, no blocking commands with
@@ -103,6 +103,11 @@ context grows with each call. Short, bounded runs are also more reliable than lo
   agent obtains the result and briefs the continuation.
 - Pass context through the brief and files, not by keeping an old agent alive.
 
+<!-- platform:claude -->
+Subagent requests keep a five-minute cache by default, also when the main conversation has a longer
+one; `subagentPromptCacheTtl` (or `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) set to `1h` extends it.
+
+<!-- /platform -->
 ## Number of runs
 
 The number of subagent runs follows the work, not a fixed count. One rule for every skill:

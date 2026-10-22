@@ -55,7 +55,10 @@ parallel. Mark each scenario `functional`, `visual` or `both`.
 The pass is made of units of work per [number of runs](shared/delegation.md#number-of-runs):
 
 - **Script authoring:** one unit is a group, or several small groups that share screens, whose scripts
-  fit one run. A small pass is one unit; then one tester writes, runs and judges everything.
+  fit one run. A small pass is one unit; then one tester writes, runs and judges everything. Script
+  authors run their scripts themselves, so do not run more of them at once than
+  [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers), and do not start a pass of
+  your own while they work.
 - **Runs** need no subagent: the tool runs the scripts in at most
   [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers) headless browsers and
   sequences the rest.

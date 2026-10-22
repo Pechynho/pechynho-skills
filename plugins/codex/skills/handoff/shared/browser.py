@@ -10,7 +10,7 @@ Usage:
     browser.py DIR scenario ID --title T --group G [--kind K] [--priority P] [--role R] [--viewports V ...]
     browser.py DIR scenarios FILE                          add or update scenarios from a JSON list
     browser.py DIR ready ID [ID ...]                       the author confirms a script after running it
-    browser.py DIR run [ID ...] [--group G] [--todo|--failed|--all] [--repeat N]
+    browser.py DIR run [ID ...] [--group G] [--todo|--failed|--all] [--repeat N] [--wait SEC]
     browser.py DIR result ID                               compact view of the last run of a scenario
     browser.py DIR triage ID app|script|env|flaky [--finding F] [--note N]
     browser.py DIR set ID pending|blocked|unverified --reason R
@@ -594,12 +594,14 @@ def baselines(t: Testing, sc: dict) -> dict:
 
 
 class Runner:
-    def __init__(self, t: Testing, run_id: str, fingerprint: str | None, repeat: int):
+    def __init__(self, t: Testing, run_id: str, fingerprint: str | None, repeat: int, wait: float | None = None):
         self.t = t
         self.run_id = run_id
         self.fingerprint = fingerprint
         self.repeat = repeat
+        self.wait = wait
         self.stop = threading.Event()
+        self.busy = threading.Event()
         self.procs: dict[str, subprocess.Popen] = {}
         self.print_lock = threading.Lock()
         self.summary: dict[str, list[str]] = {}
@@ -609,8 +611,11 @@ class Runner:
             print(line, flush=True)
 
     def claim(self, sid: str) -> bool:
-        """Wait for a free browser slot, counted across all processes working on this folder."""
-        while not self.stop.is_set():
+        """Wait for a free browser slot, counted across all processes working on this folder. A run starts
+        at most max_browsers groups at once, so it only waits while another process holds a slot; --wait
+        limits that time, then the run starts nothing more."""
+        waited = 0.0
+        while not self.stop.is_set() and not self.busy.is_set():
             with self.t.locked() as s:
                 self.t.reap()
                 running = sum(1 for sc in s["scenarios"].values() if sc.get("running"))
@@ -619,20 +624,27 @@ class Runner:
                                                       "node_pid": None, "dir": None}
                     self.t.save()
                     return True
+            if self.wait is not None and waited >= self.wait:
+                self.busy.set()
+                return False
+            started = time.monotonic()
             time.sleep(1)
+            waited += time.monotonic() - started
         return False
 
     def group(self, sids: list[str]) -> None:
         for sid in sids:
-            if self.stop.is_set():
+            if self.stop.is_set() or self.busy.is_set():
                 return
             attempts = []
             for n in range(1, self.repeat + 1):
-                if self.stop.is_set() or not self.claim(sid):
+                if not self.claim(sid):
                     break
                 attempts.append(self.attempt(sid, n))
                 self.release(sid)
-            if attempts:
+            # A scenario stopped before its last repeat is not recorded: an incomplete check of
+            # instability would look like a complete one.
+            if len(attempts) == self.repeat or (attempts and self.stop.is_set()):
                 self.record(sid, attempts)
 
     def release(self, sid: str) -> None:
@@ -795,6 +807,8 @@ class Runner:
 def cmd_run(t: Testing, args) -> None:
     if args.repeat < 1:
         raise Refused("--repeat must be at least 1")
+    if args.wait is not None and args.wait < 0:
+        raise Refused("--wait must not be negative")
     if not shutil.which("node"):
         raise Refused("node not found on PATH")
     with t.locked() as s:
@@ -814,7 +828,7 @@ def cmd_run(t: Testing, args) -> None:
         for sid in chosen:
             groups.setdefault(s["scenarios"][sid]["group"], []).append(sid)
         max_browsers = s["config"]["max_browsers"]
-    runner = Runner(t, run_id, fingerprint, args.repeat)
+    runner = Runner(t, run_id, fingerprint, args.repeat, args.wait)
     print(f"run {run_id}: {len(chosen)} scenario(s) in {len(groups)} group(s), at most {max_browsers} browser(s), "
           f"code {fingerprint or 'unknown'}; scenarios of one group run in order", flush=True)
     pool = ThreadPoolExecutor(max_workers=max(1, min(max_browsers, len(groups))))
@@ -839,9 +853,14 @@ def cmd_run(t: Testing, args) -> None:
         triage = [sid for sid in chosen if s["scenarios"][sid]["outcome"] == "failing"]
         judge = sum(1 for sid in chosen for shot in s["scenarios"][sid]["shots"].values()
                     if shot["run"] == run_id and shot["judgment"] == "pending")
+        not_run = [sid for sid in chosen if (s["scenarios"][sid].get("last_run") or {}).get("run") != run_id]
     counts = ", ".join(f"{len(v)} {k}" for k, v in sorted(runner.summary.items()))
     print(f"summary: {counts or 'nothing recorded'}" + (f"; triage: {' '.join(triage)}" if triage else "")
           + (f"; shots to judge: {judge}" if judge else ""))
+    if runner.busy.is_set():
+        t.append_log({"type": "run_busy", "run": run_id, "not_run": not_run})
+        raise Refused(f"busy: other runs held every browser for more than {args.wait:g}s; "
+                      f"not run, keeping their previous outcome: {' '.join(not_run)}")
 
 
 # --- results ----------------------------------------------------------------------------------
@@ -1239,6 +1258,8 @@ def main() -> None:
     which.add_argument("--failed", action="store_true", help="failing, failed and flaky scenarios")
     which.add_argument("--all", action="store_true", help="every ready script")
     p.add_argument("--repeat", type=int, default=1, help="run each scenario N times, for instability")
+    p.add_argument("--wait", type=float, metavar="SEC",
+                   help="give up after waiting SEC seconds for browsers held by other processes")
     p = sub.add_parser("result")
     p.add_argument("id")
     p = sub.add_parser("triage")
