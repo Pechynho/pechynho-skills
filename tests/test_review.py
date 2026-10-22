@@ -1805,6 +1805,15 @@ class ActorTest(ReviewTestCase):
         self.assertIn("never the sole verifier of its own finding", result.stderr)
         self.refused("verify", "R1-01", "confirmed", contains="verify needs --verifier")
 
+    def test_a_finding_id_cannot_leave_the_findings_folder(self):
+        for fid in ("../../escape", "/tmp/x", "R1-01/../x", ".hidden", "R1 01"):
+            with self.subTest(fid):
+                result = self.as_("R1", "finding", fid, "--cell", "C01/G1", "--kind", "question", "--title", "t",
+                                  "--body", "x")
+                self.assertExit(result, 1)
+                self.assertIn("use letters, digits", result.stderr)
+        self.assertFalse((self.tmp / "escape.md").exists())
+
     def test_a_finding_needs_a_running_cell(self):
         self.assertOk(self.as_("R1", "set", "C01/G1", "covered"))
         result = self.as_("R1", "finding", "R1-01", "--cell", "C01/G1", "--kind", "question", "--title", "t",

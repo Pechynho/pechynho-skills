@@ -76,6 +76,7 @@ VERDICTS = ("confirmed", "refuted", "undecidable")
 FINDING_STATUSES = ("unverified", "disputed", "awaiting_decision", "duplicate", "stale") + VERDICTS
 SETTLED_FINDINGS = ("refuted", "duplicate")
 LOG_REQUIRED = {"check": ("subject", "result"), "decision": ("text",), "note": ("text",)}
+FINDING_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 DEFAULT_WAVE_SIZE = 6
 DEFAULT_CHUNK_LINES = 2500
 
@@ -1022,6 +1023,8 @@ def body_text(review: Review, value: str, option: str) -> str:
 
 
 def cmd_finding(review: Review, args) -> None:
+    if not FINDING_ID_RE.fullmatch(args.id):  # the ID names findings/{ID}.md
+        raise Refused(f"finding {args.id!r}: use letters, digits, '-' or '_', starting with a letter or digit")
     cell = review.cell(args.cell)
     if review.actor:
         if cell.get("owner") != review.actor or cell["status"] != "running":
