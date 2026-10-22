@@ -10,7 +10,7 @@ Usage:
     review.py DIR audit-diff FILE                         the current full-content diff of an audit
     review.py DIR triage [--chunk-lines N] [--out FILE]   propose chunks from DIR/diff.patch
     review.py DIR chunks FILE                             load the (edited) chunk proposal
-    review.py DIR chunk ID [--title T] [--files F ...] [--risk R] [--treatment T] [--integration]
+    review.py DIR chunk ID [--title T] [--files F ...] [--risk R] [--treatment T] [--integration] [--reason R]
     review.py DIR group ID --perspectives P [P ...] [--title T]
     review.py DIR cell CHUNK GROUP [GROUP ...]            cells that a reviewer has to cover
     review.py DIR omit CHUNK [CHUNK ...] --groups G [G ...] --reason R

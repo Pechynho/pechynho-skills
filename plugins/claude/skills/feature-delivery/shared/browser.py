@@ -3,11 +3,13 @@
 triage of failures, judgments of screenshots and findings.
 
 Usage:
-    browser.py DIR init --scope S --url URL [--repo DIR] [--head REF] [--base REF] [--working-tree] [--max-browsers N]
+    browser.py DIR init --scope S --url URL [--repo DIR | --no-repo] [--head REF] [--base REF] [--working-tree] [--max-browsers N]
                         [--timeout SEC] [--viewport NAME=WxH ...] [--playwright DIR ...] [--browser B]
-    browser.py DIR config [--url URL] [--max-browsers N] [--timeout SEC] [--viewport NAME=WxH ...] ...
+    browser.py DIR config [--url URL] [--max-browsers N] [--timeout SEC] [--viewport NAME=WxH ...]
+                          [--playwright DIR ...] [--browser B] [--diff-threshold F] [--diff-tolerance N]
     browser.py DIR harness                                 copy the current harness.mjs into DIR
     browser.py DIR scenario ID --title T --group G [--kind K] [--priority P] [--role R] [--viewports V ...]
+                            [--data D] [--script PATH]
     browser.py DIR scenarios FILE                          add or update scenarios from a JSON list
     browser.py DIR ready ID [ID ...]                       the author confirms a script after running it
     browser.py DIR run [ID ...] [--group G] [--todo|--failed|--all] [--repeat N] [--wait SEC]
@@ -19,7 +21,7 @@ Usage:
     browser.py DIR finding ID --scenarios S [S ...] --kind K --title T [--severity S]
     browser.py DIR resolve ID [ID ...] STATUS --reason R [--duplicate-of ID]
     browser.py DIR findings [--all]
-    browser.py DIR assign --owner O --task T [ID ...] [--group G]
+    browser.py DIR assign --owner O --task T [ID ...] [--group G] [--note N]
     browser.py DIR release OWNER [--lost]
     browser.py DIR next                                    what to brief, run, triage or judge now
     browser.py DIR status                                  derived overview, the entry point on resume

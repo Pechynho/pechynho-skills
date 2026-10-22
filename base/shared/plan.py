@@ -7,7 +7,7 @@ Usage:
     plan.py PLAN_DIR status                    derived overview of the plan
     plan.py PLAN_DIR next                      tasks ready to start (and parents ready to integrate)
     plan.py PLAN_DIR show ID [ID ...]          tasks with their status, dependencies and log
-    plan.py PLAN_DIR set ID [ID ...] STATUS [options]
+    plan.py PLAN_DIR set ID [ID ...] STATUS [--owner O] [--evidence E] [--blocker Q] [--reason R]
                                                change task statuses; logs each change with its evidence
     plan.py PLAN_DIR log TYPE key=value ...    append a record (check, finding, validation_plan, validation,
                                                checkpoint, note)
