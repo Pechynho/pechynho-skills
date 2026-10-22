@@ -56,8 +56,9 @@ pick the model. A short payment or permission change can be harder than a large 
 - **Split medium and larger work among subagents.** Delegate coherent results sized for one run,
   typically one plan task with its tests, not small individual steps and not several tasks at once.
   The main agent handles shared decisions and integration.
-- Independent parts may run in parallel; order dependent tasks by their contracts and inputs. Fit the
-  number of agents to the available slots and the truly parallelizable work.
+- Independent parts may run in parallel; order dependent tasks by their contracts and inputs. The
+  number of agents and how many run at once follow the
+  [number of runs](shared/delegation.md#number-of-runs).
 - Adjust the split as you learn. A small fix may become a larger task; an unclear task may, after
   analysis, become a precisely bounded implementation for a weaker model.
 

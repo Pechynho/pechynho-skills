@@ -76,13 +76,15 @@ goal is complete coverage, not sampling of risky spots. Risky parts first and de
 If a reviewer cannot cover part of its cell, it names the files or sections and the orchestrator
 records the cell as `partial` and arranges a follow-up; until then that coverage counts as incomplete.
 
-**X is the maximum number of review subagents** unless the user requires an exact number. In a large
-review X limits the parallel reviewers of one wave, not the total: the total number of reviewer runs is
-in the estimate the user approves per [large reviews](references/large-reviews.md#4-estimate-and-approval),
-so say there that it exceeds X. Without X, choose a reasonable number by scope
-and state the split. One reviewer may take several related perspectives; the number of perspectives is
-neither the number of agents nor a required number of findings. Respect the available slots and work in
-batches; verification and synthesis are later phases, not a requirement to run everything at once.
+The number of reviewers follows the [number of runs](shared/delegation.md#number-of-runs): the cells
+that fit one run each. **X is the maximum number of review subagents** unless the user requires an exact
+number. In a large review X limits the parallel reviewers of one wave, not the total: the total number
+of reviewer runs is in the estimate the user approves per
+[large reviews](references/large-reviews.md#4-estimate-and-approval), so say there that it exceeds X.
+Without X, the wave size is [`parallel_runs`](shared/project-context.md#parallel-runs); state the split.
+One reviewer may take several related perspectives; the number of perspectives is neither the number
+of agents nor a required number of findings. Verification and synthesis are later phases, not a
+requirement to run everything at once.
 Model choice and the case of unavailable subagents follow [delegation](shared/delegation.md).
 
 Give every reviewer:
@@ -116,12 +118,12 @@ that depend on an answer wait. Elapsed time is not a decision.
 
 ## 4. Independent verification
 
-The number of verifiers follows the number and difficulty of the findings: roughly one verifier per
-four findings, at least one when there is anything to verify and at most three per batch of findings;
-a large review verifies each wave's findings as they arrive. With no findings skip the verification
-phase. Do not invent findings to give verifiers work. Every finding has a primary
-verifier; a critical or disputed finding is also checked by a second one. A verifier is never the sole
-verifier of its own finding.
+The number of verifiers follows the [number of runs](shared/delegation.md#number-of-runs) over the
+findings: a verifier run takes the findings that share code or a cause, typically about four, fewer
+when they are hard or critical; they run in the same slots as the reviewers. A large review verifies
+each wave's findings as they arrive. With no findings skip the verification phase. Do not invent
+findings to give verifiers work. Every finding has a primary verifier; a critical or disputed finding
+is also checked by a second one. A verifier is never the sole verifier of its own finding.
 
 Give the verifiers the exact assignment, code, rules, user decisions, evidence and proposed fixes.
 A verifier independently traces the behavior in the sources. When it needs a targeted check, it hands

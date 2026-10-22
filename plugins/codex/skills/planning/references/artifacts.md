@@ -124,7 +124,8 @@ that only accumulates goes into the log.
 | `task` | `id`, `status` | A status change with `from`, and `evidence` for `done` or `reason` for `cancelled`. |
 | `check` | `subject`, `result` | A check actually performed: the command or scenario, scope, `revision`, a link to the evidence. |
 | `finding` | `id`, `status` | A finding from validation, testing or review: `source`, `severity`, `summary`, affected `tasks`, `fix`, `evidence`. Status `open`, `resolved`, `rejected` or `awaiting_decision`. |
-| `validation` | `validators`, `result` | A validation pass: scope, revision and the tasks whose `complexity` and `risk` it confirmed (`confirmed_tasks`). |
+| `validation_plan` | `pass`, `mode`, `cells` | The cells of one validation pass per the [validation mode](delegation-and-validation.md#validation-mode): `mode` `single`, `focus`, `areas` or `recheck`; each cell has an `id`, a `focus`, its `chapters` and `tasks`, and `integration: true` for the cell over the links between areas. |
+| `validation` | `validators`, `result` | One validator run: `pass` and `cell`, `coverage` `covered` or `partial` with `unchecked`, scope, revision and the tasks whose `complexity` and `risk` it confirmed (`confirmed_tasks`). |
 | `checkpoint` | `commit` | A checkpoint commit and the milestone it saves. |
 | `note` | `text` | Any other fact a later session needs, for example the reason of a decision about the work. |
 

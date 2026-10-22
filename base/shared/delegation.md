@@ -38,8 +38,8 @@ requested variant is unavailable, choose a suitable available alternative and st
   many dependencies, root-cause hunting, security, payments, data consistency and concurrency, plan
   design, validators, reviewers, verifiers, synthesis, exploratory testing and visual judgment.
 - The number of changed lines alone does not pick the model: large mechanical work may suit the weaker
-  tier, a short payment or permission change needs the stronger judgment. Do not increase the number
-  of agents by the number of files.
+  tier, a short payment or permission change needs the stronger judgment. The number of agents
+  follows the [number of runs](#number-of-runs), not the number of files.
 - Before every launch state in one line the chosen agent, its tier and the reason.
 
 ## Agents of this collection
@@ -102,6 +102,29 @@ context grows with each call. Short, bounded runs are also more reliable than lo
   provide, it records the request, finishes the independent part and ends with a handover. The main
   agent obtains the result and briefs the continuation.
 - Pass context through the brief and files, not by keeping an old agent alive.
+
+## Number of runs
+
+The number of subagent runs follows the work, not a fixed count. One rule for every skill:
+
+- **Count units of work.** A unit is one assignment that fits one run, per the rule above. The number
+  of runs is the number of units: not the number of files, perspectives or areas, and not a number a
+  skill names for the typical case. Merge small units that share their context into one run; split a
+  unit that does not fit.
+- **Split by area when one run cannot hold everything.** Each run then reads only its area plus a
+  short shared map of the whole (the goal, the decisions, the contracts between areas and who uses
+  them), instead of everyone reading everything; this is where splitting saves context. Links between
+  the areas get their own integration run that works from the map and the area results and reads the
+  sources only where a link needs it.
+- **Limit what runs at once, not the total.** Keep at most
+  [`parallel_runs`](project-context.md#parallel-runs) runs going and start the next unit in a freed
+  slot; shared resources (one browser session, the same test data, the same file) lower that number or
+  sequence the runs. A large total that needs several rounds is stated to the user before it starts.
+- **A user's number is binding.** When the user gives one, it is a maximum unless they say it is
+  exact; when it is smaller than the units, combine units or ask what to leave out, never drop an area
+  silently.
+- Before launching, state the units, the number of runs, what runs in parallel and the reason in a few
+  lines.
 
 ## When subagents are unavailable
 

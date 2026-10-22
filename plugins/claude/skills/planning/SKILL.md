@@ -69,10 +69,13 @@ later back to the user.
 ## 3. Prepare the plan with subagents
 
 Read the [document and data structure](references/artifacts.md) and
-[delegation and validation](references/delegation-and-validation.md). Delegate coherent parts of the
-plan preparation by scope. Pass the shared confirmed assignment, the relevant decisions and the concrete
-rule files, the code findings and an explicit ban on adding business decisions. Assign file owners and
-contracts between the parts; choose the way of passing information yourself.
+[delegation and validation](references/delegation-and-validation.md). Cut the plan into **areas**: a
+coherent part of the design with its chapters, code and tasks, for example the data model, an API, one
+screen or a migration. A small plan is one area. Delegate the preparation by area per the
+[number of runs](shared/delegation.md#number-of-runs). Pass the shared confirmed assignment, the
+relevant decisions and the concrete rule files, the code findings and an explicit ban on adding
+business decisions. Assign file owners and contracts between the areas; choose the way of passing
+information yourself. The same areas carry on into the validation.
 
 The main agent links the PRD with the technical chapters, resolves technical conflicts and only from a
 consistent design has the implementation tasks with their dependencies built. A task includes its tests
@@ -82,12 +85,15 @@ clear output; do not record an unverified result as an established technical fac
 
 ## 4. Validate independently and fix
 
-Hand the finished design automatically to **one validator for a smaller scope, two for a larger or
-riskier plan**. Validators are other subagents than the authors. They check the plan against the
-assignment, the confirmed decisions and the real code; details are in the delegation reference. They
+Hand the finished design automatically to validators, other subagents than the authors. The size of
+the plan picks the [validation mode](references/delegation-and-validation.md#validation-mode): one
+validator for a small plan, two by focus for a medium one, and for a large plan one validator per area
+plus an integration validator over the links between areas. Record the validation cells with
+`plan.py log validation_plan` so that an interrupted validation resumes from `plan.py validations`.
+Validators check the plan against the assignment, the confirmed decisions and the real code. They
 pass their findings to the main agent, who evaluates them and incorporates justified technical fixes.
 Business questions go to the user and the answer is reflected in all affected parts. After changes,
-have the fixed points and their links re-checked in a targeted way.
+have the fixed points and their links re-checked in a targeted way, only in the affected areas.
 
 The main agent verifies JSON parsing, links, uniqueness of IDs, existence of dependencies, absence of
 cycles and coverage of the acceptance criteria by tasks and verification, with `plan.py validate` of

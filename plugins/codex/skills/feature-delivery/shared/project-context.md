@@ -28,6 +28,7 @@ project already answers; ask only when a value is needed and neither gives a usa
 - checks: `make lint`, `make test`    # what must pass before work counts as done
 - dev_env: docs/dev-environment.md   # how to reach the dev app, test accounts, data preparation
 - handoff_prefix: myproject
+- parallel_runs: 6                    # subagent runs at the same time
 ```
 
 ### Plans directory
@@ -71,6 +72,13 @@ through the main agent; do not assume containers or a dependency on the main che
 Never guess that an environment is dev: an account name or the
 look of a page is not proof. Without a verifiable dev environment, browser testing that writes data
 waits.
+
+### Parallel runs
+
+`parallel_runs`, default 6. The number of subagent runs one skill keeps going at the same time; the
+rest waits for a free slot. A lower environment limit on concurrent subagents wins, and a number the
+user gives for the current run replaces it. How it is used is in
+[delegation](delegation.md#number-of-runs).
 
 ### Handoff prefix
 

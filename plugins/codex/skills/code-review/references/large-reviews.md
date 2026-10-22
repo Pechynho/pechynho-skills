@@ -55,7 +55,9 @@ start a second wave.
 
 ## 5. Waves
 
-A wave is up to the wave size of parallel reviewer runs (6 by default, or the user's X). Each run takes
+A wave is up to the wave size of parallel reviewer runs (the user's X, otherwise
+[`parallel_runs`](../shared/project-context.md#parallel-runs), 6 by default); pass it to `init
+--wave-size`. Each run takes
 the cells from `next` that belong together, usually several groups of one chunk or one group of a few
 small chunks, recorded with `start`. Give it the brief of a reviewer from the
 [skill](../SKILL.md#2-split-the-perspectives-among-review-subagents) narrowed to its chunk files, plus
@@ -70,7 +72,7 @@ When a run returns:
 3. Add a few lines to `waves.md` in the review folder: what the run found about contracts and links to
    other chunks. The integration cells and the synthesis read it.
 4. Start the next ready cells in the freed slots and brief verifiers for the new findings at the same
-   time; verification does not wait for the end of all waves. The number of verifiers follows the
+   time; verification does not wait for the end of all waves. The verifier runs follow the
    [verification rules](../SKILL.md#4-independent-verification) per batch of new findings.
 
 A run lost to an interruption returns its cells to the queue with `set … pending`; resuming an

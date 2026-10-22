@@ -8,8 +8,12 @@ Usage:
     plan.py PLAN_DIR next                      tasks ready to start (and parents ready to integrate)
     plan.py PLAN_DIR show ID                   one task with its status, dependencies and log
     plan.py PLAN_DIR set ID STATUS [options]   change a task status; logs the change with its evidence
-    plan.py PLAN_DIR log TYPE key=value ...    append a record (check, finding, validation, checkpoint, note)
+    plan.py PLAN_DIR log TYPE key=value ...    append a record (check, finding, validation_plan, validation,
+                                               checkpoint, note)
     plan.py PLAN_DIR findings [--all]          current state of findings, unresolved by default
+    plan.py PLAN_DIR validations [--pass P | --open]
+                                               cells of a validation pass, the last by default, or the cells
+                                               not covered in all passes
 
 The format is described in planning/references/artifacts.md. Python 3.8+, standard library only.
 Exit code 0 on success, 1 on a validation error or a refused change, 2 on wrong usage.
@@ -34,10 +38,13 @@ IMPLEMENTATION_STATUSES = ("not_started", "in_progress", "blocked", "done")
 DELIVERY_STATUSES = ("in_progress", "awaiting_user", "blocked", "ready_for_user", "accepted")
 DELIVERY_PHASES = ("planning", "implementation", "playwright", "code_review", "fixes", "handoff")
 FINDING_STATUSES = ("open", "resolved", "rejected", "awaiting_decision")
+VALIDATION_MODES = ("single", "focus", "areas", "recheck")
+COVERAGE = ("covered", "partial")
 LOG_REQUIRED = {
     "task": ("id", "status"),
     "check": ("subject", "result"),
     "finding": ("id", "status"),
+    "validation_plan": ("pass", "mode", "cells"),
     "validation": ("validators", "result"),
     "checkpoint": ("commit",),
     "note": ("text",),
@@ -284,7 +291,82 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
                 errors.append(f"log.jsonl record {n} ({kind}): missing {field}")
         if kind == "finding" and record.get("status") not in FINDING_STATUSES:
             errors.append(f"log.jsonl record {n}: invalid finding status {record.get('status')!r}")
+        if kind in ("validation_plan", "validation"):
+            passes = validation_passes(records[:n - 1])
+            errors += [f"log.jsonl record {n}: {e}" for e in check_validation(plan, record, passes)]
     return errors, warnings
+
+
+def validation_passes(records: list[dict]) -> dict[str, dict]:
+    """Each validation pass with its cells and the last record of every cell, in log order."""
+    passes: dict[str, dict] = {}
+    for record in records:
+        name = record.get("pass")
+        if not isinstance(name, str):
+            continue  # reported by validate
+        if record.get("type") == "validation_plan" and isinstance(record.get("cells"), list):
+            cells = {c["id"]: c for c in record["cells"] if isinstance(c, dict) and isinstance(c.get("id"), str)}
+            passes[name] = {"mode": record.get("mode"), "cells": cells, "runs": {}}
+        elif record.get("type") == "validation" and name in passes and isinstance(record.get("cell"), str):
+            passes[name]["runs"][record["cell"]] = record
+    return passes
+
+
+def check_validation(plan: Plan, record: dict, passes: dict[str, dict]) -> list[str]:
+    """The problems of one validation_plan or validation record against the passes before it."""
+    errors: list[str] = []
+    if "pass" in record and not isinstance(record["pass"], str):
+        return errors + ["pass must be a string"]
+    if record.get("type") == "validation_plan":
+        if record.get("pass") in passes:
+            errors.append(f"validation pass {record.get('pass')} already exists")
+        if record.get("mode") not in VALIDATION_MODES:
+            errors.append(f"validation mode must be one of {', '.join(VALIDATION_MODES)}")
+        cells = record.get("cells")
+        if not isinstance(cells, list) or not cells:
+            return errors + ["cells must be a non-empty JSON list"]
+        seen: set[str] = set()
+        for cell in cells:
+            cid = cell.get("id") if isinstance(cell, dict) else None
+            if not isinstance(cid, str) or not cid:
+                errors.append("every cell needs a string id")
+                continue
+            if cid in seen:
+                errors.append(f"duplicate cell {cid}")
+            seen.add(cid)
+            for tid in as_list(cell.get("tasks")):
+                if not isinstance(tid, str) or tid not in plan.tasks:
+                    errors.append(f"cell {cid}: unknown task {tid!r}")
+            for ref in as_list(cell.get("chapters")):
+                if not isinstance(ref, str):
+                    errors.append(f"cell {cid}: chapter must be a path, got {ref!r}")
+                    continue
+                target = ref.split("#", 1)[0]
+                if target and not (plan.root / target).exists():
+                    errors.append(f"cell {cid}: missing chapter {ref}")
+        return errors
+    if "pass" not in record and "cell" not in record:
+        return errors  # a whole-plan validation without cells
+    run = passes.get(record.get("pass"))
+    if not run:
+        return errors + [f"unknown validation pass {record.get('pass')!r}"]
+    if not isinstance(record.get("cell"), str) or record["cell"] not in run["cells"]:
+        errors.append(f"unknown cell {record.get('cell')!r} in pass {record.get('pass')}")
+    if record.get("coverage") not in COVERAGE:
+        errors.append(f"coverage must be one of {', '.join(COVERAGE)}")
+    if record.get("coverage") == "partial" and not record.get("unchecked"):
+        errors.append("partial coverage needs unchecked: what the validator could not check")
+    return errors
+
+
+def cell_states(run: dict) -> dict[str, str]:
+    """covered, partial or pending per cell; an integration cell waits until the other cells are covered."""
+    states = {cid: run["runs"].get(cid, {}).get("coverage", "pending") for cid in run["cells"]}
+    local_open = any(states[c] != "covered" for c, cell in run["cells"].items() if not cell.get("integration"))
+    for cid, cell in run["cells"].items():
+        if cell.get("integration") and states[cid] == "pending" and local_open:
+            states[cid] = "waiting"
+    return states
 
 
 # --- commands ---------------------------------------------------------------------------------
@@ -364,6 +446,15 @@ def cmd_status(plan: Plan, args) -> None:
     open_findings = [f for f in findings(plan) if f.get("status") in ("open", "awaiting_decision")]
     if open_findings:
         print(f"unresolved findings: {len(open_findings)} (see findings)")
+    passes = validation_passes(plan.log())
+    if passes:
+        name, run = list(passes.items())[-1]
+        states = cell_states(run)
+        covered = sum(1 for v in states.values() if v == "covered")
+        print(f"validation {name} ({run['mode']}): {covered}/{len(states)} cells covered (see validations)")
+        not_covered = open_cells(passes)
+        if not_covered:
+            print(f"cells not covered in all passes: {len(not_covered)} (see validations --open)")
     start, integrate = ready(plan, progress)
     print(f"ready to start: {', '.join(start) or '-'}")
     if integrate:
@@ -472,6 +563,10 @@ def cmd_log(plan: Plan, args) -> None:
         raise Refused(f"{args.type} needs: {', '.join(missing)}")
     if args.type == "finding" and record["status"] not in FINDING_STATUSES:
         raise Refused(f"finding status must be one of {', '.join(FINDING_STATUSES)}")
+    if args.type in ("validation_plan", "validation"):
+        problems = check_validation(plan, record, validation_passes(plan.log()))
+        if problems:
+            raise Refused("; ".join(problems))
     plan.append_log(record)
     print("logged " + json.dumps(record, ensure_ascii=False))
 
@@ -493,6 +588,42 @@ def cmd_findings(plan: Plan, args) -> None:
         print(json.dumps({k: v for k, v in f.items() if k != "type"}, ensure_ascii=False))
     if not items:
         print("no findings" if args.all else "no unresolved findings")
+
+
+def open_cells(passes: dict[str, dict]) -> list[tuple[str, str, str]]:
+    """(pass, cell, state) of every cell not covered, in all passes; plan_status ready needs none."""
+    return [(name, cid, state) for name, run in passes.items()
+            for cid, state in cell_states(run).items() if state != "covered"]
+
+
+def cmd_validations(plan: Plan, args) -> None:
+    passes = validation_passes(plan.log())
+    if not passes:
+        print("no validation pass recorded (log validation_plan)")
+        return
+    if args.open:
+        cells = open_cells(passes)
+        for name, cid, state in cells:
+            print(f"{name}/{cid}  [{state}]  {passes[name]['cells'][cid].get('focus', '')}")
+        if not cells:
+            print("every cell of every pass is covered")
+        return
+    name = args.pass_id or list(passes)[-1]
+    if name not in passes:
+        raise Refused(f"unknown validation pass {name}")
+    run = passes[name]
+    states = cell_states(run)
+    print(f"pass {name} ({run['mode']})")
+    for cid, cell in run["cells"].items():
+        state = states[cid]
+        extra = ""
+        if state == "partial":
+            extra = "  unchecked: " + json.dumps(run["runs"][cid].get("unchecked"), ensure_ascii=False)
+        elif state in ("covered", "partial"):
+            extra = f"  result: {run['runs'][cid].get('result')}"
+        print(f"{cid}  [{state}]  {cell.get('focus', '')}{extra}")
+    brief = [c for c, v in states.items() if v in ("pending", "partial")]
+    print(f"to brief: {', '.join(brief) or '-'}")
 
 
 def main() -> None:
@@ -517,6 +648,10 @@ def main() -> None:
     p.add_argument("fields", nargs="*", help="key=value; values are parsed as JSON when possible")
     p = sub.add_parser("findings")
     p.add_argument("--all", action="store_true")
+    p = sub.add_parser("validations")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--pass", dest="pass_id", help="the pass to show; the last one by default")
+    group.add_argument("--open", action="store_true", help="the cells not covered in all passes")
     args = parser.parse_args()
 
     if not (args.plan_dir / "tasks" / "index.json").exists():
@@ -524,6 +659,7 @@ def main() -> None:
     commands = {
         "init": cmd_init, "validate": cmd_validate, "status": cmd_status, "next": cmd_next,
         "show": cmd_show, "set": cmd_set, "log": cmd_log, "findings": cmd_findings,
+        "validations": cmd_validations,
     }
     try:
         commands[args.command](Plan(args.plan_dir), args)
