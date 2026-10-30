@@ -50,11 +50,15 @@ parallel. Mark each scenario `functional`, `visual` or `both`.
 
 The pass is made of units of work per [number of runs](shared/delegation.md#number-of-runs):
 
-- **Script authoring:** one unit is a group, or several small groups that share screens, whose scripts
-  fit one run. A small pass is one unit; then one tester writes, runs and judges everything. The
-  number of authors follows these units, not the number of browsers: authors spend their run reading
-  and writing, and the tool keeps their short runs within the browser limit. Only the agents driving
-  an interactive browser at once stay within
+- **Script authoring:** one unit is what one author writes after reading the source of its screens
+  once: a group, or several small groups on the same screens. Merge groups only when they share
+  screens; split a group too large for one author into smaller groups, each with its own test data,
+  because the tool does not keep two processes from running scenarios of one group at once. Only a
+  pass that is a single unit goes to one tester who writes, runs and judges everything. The number of
+  authors follows these units, not the number of browsers: authors spend their run reading and
+  writing, and the tool keeps their short runs within the browser limit. Start all authors at once,
+  up to [`parallel_runs`](shared/project-context.md#parallel-runs); none waits for another. Only the
+  agents driving an interactive browser at once stay within
   [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers), because the tool does not
   count them.
 - **Runs** need no subagent: the tool runs the scripts in at most
@@ -68,10 +72,14 @@ The pass is made of units of work per [number of runs](shared/delegation.md#numb
 
 Record each subagent run with `assign` and close it with `release`. Hand over the scope, URLs, revision,
 roles, existing decisions, the [ground rules](shared/ground-rules.md) and the concrete project rule
-files, the testing folder and the tool command, the scenarios or groups, ownership of data, the fix
-mode and the results format. Model choice follows [delegation](shared/delegation.md): script authoring,
-exploration and visual judgment go to the stronger model. The visual judge must be able to view
-screenshots, not only list them; without that ability do not mark the look as verified.
+files, the testing folder and the tool command, the scenarios or groups, ownership of data, the fix mode
+and the results format. Give script authors one shared map so that none of them rediscovers it: the
+URLs, test accounts, the login and data preparation from
+[`dev_env`](shared/project-context.md#dev-environment), the harness use and the selectors already known.
+Before launching, state the units and the number of authors per [number of
+runs](shared/delegation.md#number-of-runs). Model choice follows [delegation](shared/delegation.md):
+script authoring, exploration and visual judgment go to the stronger model. The visual judge must be
+able to view screenshots, not only list them; without that ability do not mark the look as verified.
 
 ## 3. Environment and test data
 
@@ -132,14 +140,14 @@ in each state to judge; the harness takes it at every viewport of the scenario w
 or in a fresh mobile context per viewport with `perViewport` when the application detects the device.
 
 An author never waits for a browser: a long tool call lets the subagent's prompt cache expire. The
-author first writes the one script of the group that covers the shared setup (login, data, harness
-use), runs it with `run ID --wait 0` and fixes what is the script's fault, so a mistake there does not
-repeat in every script. Then it writes the rest of the group. A short batch it runs itself with one
-`run ID … --wait 0`, fixes the scripts and confirms the working ones with one `ready ID …`; a longer
-batch it leaves to the main agent. When `run` refuses as `busy`, the author keeps writing and tries
-once more at the end; if it is still busy, it hands the scripts over as `written`, named as not run. A script
-that cannot be written (an unsupported interaction, a missing tool) is set `unverified` with the
-reason rather than left pending.
+author first writes the one of its scripts that covers the shared setup (login, data, harness use), runs
+it with `run ID --wait 0` and fixes what is the script's fault, so a mistake there does not repeat in
+every script. Then it writes the rest of its scenarios. A short batch it runs itself with one
+`run ID … --wait 0`, fixes the scripts and confirms the working ones with one `ready ID …`; a longer batch it
+leaves to the main agent. When `run` refuses as `busy`, the author keeps writing and tries once more at
+the end; if it is still busy, it hands the scripts over as `written`, named as not run. A script that
+cannot be written (an unsupported interaction, a missing tool) is set `unverified` with the reason
+rather than left pending.
 
 The main agent runs the written scripts by group with `run --group G` or by their IDs, and the
 confirmed ones with `run --todo`, which takes only `ready` scripts. It does not run a group whose
@@ -148,14 +156,14 @@ files of passed scenarios. A pass that may outlast the shell's command timeout r
 command or group by group. After triage it confirms with `ready` the scripts whose run completed and
 is not the script's fault.
 
-Read the failing scenarios with one `result --failed` and, when needed, their failure screenshots,
-and record `triage`: an application bug (`app`, with a finding), a script bug (`script`, to a new short fixing run
-with the IDs, script paths and `result` output; do not resume the original author), an
+Read the failing scenarios with one `result --failed` and, when needed, their failure screenshots, and
+record `triage`: an application bug (`app`, with a finding), a script bug (`script`, to a new short
+fixing run with the IDs, script paths and `result` output; do not resume the original author), an
 environment problem (`env`, blocked) or an unstable result (`flaky`, after `run ID --repeat 3`). Tell
 the bug of the application from the environment and the test script; do not report a bug created by
 inconsistent fixtures as a product bug. Do not fix application code during the pass. Unclear product
-behavior goes to the main agent, who follows the
-[business questions procedure](shared/business-questions.md); a dependent fix waits for the answer.
+behavior goes to the main agent, who follows the [business questions
+procedure](shared/business-questions.md); a dependent fix waits for the answer.
 
 Assigned testers may run their scenario scripts through the tool and use the browser for exploration and
 diagnosis; everything else in [verification](shared/ground-rules.md#verification) stays with the main
