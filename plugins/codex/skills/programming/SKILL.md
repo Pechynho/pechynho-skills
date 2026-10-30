@@ -46,7 +46,10 @@ and relevant chapters, and the approved mockups of the screens you build, which 
 tasks and the task details from the [plan tool](shared/plan-tool.md) (`status`, `next`, `show`)
 instead of reading whole task files.
 Respect the dependencies and the stable task IDs. The main agent updates the progress at milestones,
-blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done` requires the task's conditions including the relevant verification.
+blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done`
+requires the task's `done_when` conditions, its tests written and the change read and integrated by
+the main agent; it does not wait for the checks. They run at the next milestone and are recorded with
+`log check`; a failing check sets the affected tasks back to `in_progress`.
 A newly discovered business ambiguity goes to the user and the answer back into the plan.
 
 At the start, find the large visual steps of the work that the plan's mockup index does not already
@@ -66,8 +69,11 @@ pick the model. A short payment or permission change can be harder than a large 
 - **Split medium and larger work among subagents.** Delegate coherent results sized for one run,
   typically one plan task with its tests, not small individual steps and not several tasks at once.
   The main agent handles shared decisions and integration.
-- Independent parts may run in parallel; order dependent tasks by their contracts and inputs. The
-  number of agents and how many run at once follow the
+- Run in parallel what the plan allows, up to
+  [`parallel_runs`](shared/project-context.md#parallel-runs): launch the ready tasks from `next` that
+  do not touch the same files per `parallelization` and whose contracts are agreed, and fill a freed
+  slot with the next ready task. A task that the others depend on runs first, alone if need be; do
+  not start its dependents early to fill the slots. The number of agents follows the
   [number of runs](shared/delegation.md#number-of-runs).
 - Adjust the split as you learn. A small fix may become a larger task; an unclear task may, after
   analysis, become a precisely bounded implementation for a weaker model.
@@ -87,9 +93,9 @@ not widen their scope on their own.
 rules. Tests verify behavior, boundaries and regressions;
 they do not merely restate the implementation. A subagent may write the implementation and the tests,
 but it does not run the checks; it hands the requests to the main agent, finishes the independent part
-and ends with a handover. It does not wait for the result: the main agent runs the checks and hands the
-fixes to the same agent within minutes of its handover or to a new run per
-[one assignment per run](shared/delegation.md#one-assignment-per-run).
+and ends with a handover. It does not wait for the result: the main agent collects the requests for the
+next milestone and hands a failure back to the same agent within minutes of its handover, otherwise to
+a new short run per [one assignment per run](shared/delegation.md#one-assignment-per-run).
 
 After taking over the results, the main agent reads the changes and checks the assignment, the rules
 and the links between the parts; a subagent's result is not automatically correct. Resolve conflicts
@@ -99,10 +105,11 @@ on a risky part, but run a separate multi-stage code review only when requested 
 ## 4. Verify at the right moment
 
 Follow the [verification rules](shared/ground-rules.md#verification): only the main agent runs the
-checks, grouped after the whole work or a larger coherent part, with the scope chosen by the change and
-the mandatory project checks. Merge identical subagent requests; a failure goes with the failing cases
-and the diff back to the subagent only within minutes of its handover, otherwise to a new short run,
-per [one assignment per run](shared/delegation.md#one-assignment-per-run). On a concrete failure
+checks at milestones, after a larger coherent part and before the handover, not after each task, with
+the scope chosen by the change and the mandatory project checks. Merge identical subagent requests; a
+failure goes with the failing cases and the diff back to the subagent within minutes of its handover,
+otherwise to a new short run, per [one assignment per run](shared/delegation.md#one-assignment-per-run).
+On a concrete failure
 verify the affected fix in a targeted way first. Do not repeat a successful run without
 a new change, a failure or an unresolved risk.
 

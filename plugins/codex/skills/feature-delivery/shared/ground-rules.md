@@ -40,8 +40,16 @@ stricter wins; a project rule that relaxes one of these rules applies only when 
   [playwright-testing](../../playwright-testing/SKILL.md) may drive a browser, run their scenario
   scripts through the browser tool and run one-off browser scripts. Automated test suites, linters,
   static analysis, formatters and builds remain exclusive to the main agent.
-- Run checks after finishing the work or a larger coherent part. Choose the relevant tools and scope by
-  the change; do not run them after every small edit.
+- Run the project checks only at milestones: after a larger coherent part of the work (several tasks,
+  not a single handover), before a checkpoint commit, a click-through or a review, and before the
+  handover. Choose the relevant tools and scope by the change; do not run them after every small edit
+  or task.
+- Between milestones run only a targeted check, and only when debugging a concrete failure or when the
+  next step depends on its result (generated code, a migration). After a late small change run the
+  targeted checks of what it affects; the full checks run once before the handover.
+- Milestones decide when checks run, never a subagent's cache: do not run checks early to catch a
+  subagent while it lives. A failure goes with the failing cases and the diff back to its author when
+  that is still within minutes of its handover, otherwise to a new short run.
 - Run a check that takes minutes as a background command and process the handovers of other runs
   meanwhile; read only its summary and failures, per
   [working with tool output](#working-with-tool-output).

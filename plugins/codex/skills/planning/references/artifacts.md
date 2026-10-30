@@ -177,7 +177,9 @@ copy log content back into `progress.json`.
 Task statuses: `pending`, `in_progress`, `blocked`, `done`, `cancelled`. When the plan is created, the
 tasks are `pending`, the owner `null` and the log empty. When editing an existing plan, keep the real
 status and the evidenced history. `done` needs evidence of the `done_when` conditions and the
-verification, finished subtasks and done dependencies. Cancelling a task requires a reason and a check
+written tests, finished subtasks and done dependencies; the project checks run at the next milestone
+per [programming](../../programming/SKILL.md#4-verify-at-the-right-moment), and a failing one sets the
+affected tasks back to `in_progress`. Cancelling a task requires a reason and a check
 of the impact on its consumers and on the coverage of criteria; cancelled work is not finished work.
 
 Do not store statuses in the tasklist as well, nor by hand in a `progress.md`. Derive counts and

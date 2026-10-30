@@ -667,7 +667,7 @@ def as_list(value) -> list:
 
 def cmd_set(plan: Plan, args) -> None:
     if args.status == "done" and not args.evidence:
-        raise Refused("done needs --evidence: the met done_when conditions and the verification")
+        raise Refused("done needs --evidence: the met done_when conditions and the written tests")
     if args.status == "cancelled" and not args.reason:
         raise Refused("cancelled needs --reason, after checking the consumers and the criteria coverage")
     ids = list(dict.fromkeys(args.ids))
