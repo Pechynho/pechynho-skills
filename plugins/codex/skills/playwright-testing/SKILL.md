@@ -54,15 +54,17 @@ parallel. Mark each scenario `functional`, `visual` or `both`.
 The pass is made of units of work per [number of runs](shared/delegation.md#number-of-runs):
 
 - **Script authoring:** one unit is a group, or several small groups that share screens, whose scripts
-  fit one run. A small pass is one unit; then one tester writes, runs and judges everything. Script
-  authors run their scripts themselves, so do not run more of them at once than
-  [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers), and do not start a pass of
-  your own while they work.
+  fit one run. A small pass is one unit; then one tester writes, runs and judges everything. The
+  number of authors follows these units, not the number of browsers: authors spend their run reading
+  and writing, and the tool keeps their short runs within the browser limit. Only the agents driving
+  an interactive browser at once stay within
+  [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers), because the tool does not
+  count them.
 - **Runs** need no subagent: the tool runs the scripts in at most
   [`max_parallel_browsers`](shared/project-context.md#max-parallel-browsers) headless browsers and
   sequences the rest.
 - **Triage** of failures is done by the main agent from `result` and the failure screenshot; a failure it
-  cannot explain goes to the script's author or to one triage run.
+  cannot explain goes to one triage run.
 - **Visual judgment:** one unit is the pending screenshots of related screens that one run can view;
   with a substantial visual scope it is separate from script authoring.
 - **Exploration** through interactive MCP is optional, one bounded run (see step 6).
@@ -132,14 +134,26 @@ follow-up screen or by reading the dev DB; a toast alone is not enough. A visual
 in each state to judge; the harness takes it at every viewport of the scenario without repeating it,
 or in a fresh mobile context per viewport with `perViewport` when the application detects the device.
 
-The author runs each new script with `run ID`, fixes what is the script's fault and confirms it with
-`ready`. A script that cannot be written (an unsupported interaction, a missing tool) is set
-`unverified` with the reason rather than left pending. Then the main agent runs the pass with
-`run --todo` and reads the compact lines; it does not open the result files of passed scenarios. A pass
-that may outlast the shell's command timeout runs as a background command or group by group.
+An author never waits for a browser: a long tool call lets the subagent's prompt cache expire. The
+author first writes the one script of the group that covers the shared setup (login, data, harness
+use), runs it with `run ID --wait 0` and fixes what is the script's fault, so a mistake there does not
+repeat in every script. Then it writes the rest of the group. A short batch it runs itself with one
+`run ID … --wait 0`, fixes the scripts and confirms the working ones with one `ready ID …`; a longer
+batch it leaves to the main agent. When `run` refuses as `busy`, the author keeps writing and tries
+once more at the end; if it is still busy, it hands the scripts over as `written`, named as not run. A script
+that cannot be written (an unsupported interaction, a missing tool) is set `unverified` with the
+reason rather than left pending.
+
+The main agent runs the written scripts by group with `run --group G` or by their IDs, and the
+confirmed ones with `run --todo`, which takes only `ready` scripts. It does not run a group whose
+author is still running its first script. It reads the compact lines and does not open the result
+files of passed scenarios. A pass that may outlast the shell's command timeout runs as a background
+command or group by group. After triage it confirms with `ready` the scripts whose run completed and
+is not the script's fault.
 
 Read the failing scenarios with one `result --failed` and, when needed, their failure screenshots,
-and record `triage`: an application bug (`app`, with a finding), a script bug (`script`, back to its author), an
+and record `triage`: an application bug (`app`, with a finding), a script bug (`script`, to a new short fixing run
+with the IDs, script paths and `result` output; do not resume the original author), an
 environment problem (`env`, blocked) or an unstable result (`flaky`, after `run ID --repeat 3`). Tell
 the bug of the application from the environment and the test script; do not report a bug created by
 inconsistent fixtures as a product bug. Do not fix application code during the pass. Unclear product
