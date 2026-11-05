@@ -49,7 +49,8 @@ The ongoing commit is made by the main agent after a coherent milestone. Before 
 diff, stages only the changes that belong, including the current progress, and checks the staged diff.
 Do not commit others' work. Include the related changes of `feedback.md` and the plan in the checkpoint.
 Drive the checks by the impact of the change and the project rules; do not rerun the whole suite just
-to write the progress. An emergency checkpoint of work in progress is possible with a clearly marked
+to write the progress. With the `at_end` or `never`
+[check timing](../shared/ground-rules.md#check-timing) a checkpoint records that the checks did not run. An emergency checkpoint of work in progress is possible with a clearly marked
 state and the checks not performed, not as a claim of completion. Do not bypass failed Git hooks
 automatically.
 

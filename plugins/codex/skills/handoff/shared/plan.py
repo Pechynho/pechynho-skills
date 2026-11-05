@@ -43,6 +43,7 @@ PLAN_STATUSES = ("draft", "awaiting_decision", "validating", "ready")
 IMPLEMENTATION_STATUSES = ("not_started", "in_progress", "blocked", "done")
 DELIVERY_STATUSES = ("in_progress", "awaiting_user", "blocked", "ready_for_user", "accepted")
 DELIVERY_PHASES = ("planning", "implementation", "playwright", "code_review", "fixes", "handoff")
+CHECK_TIMINGS = ("milestones", "at_end", "never")
 FINDING_STATUSES = ("open", "resolved", "rejected", "awaiting_decision")
 VALIDATION_MODES = ("single", "focus", "areas", "recheck")
 COVERAGE = ("covered", "partial")
@@ -57,7 +58,7 @@ LOG_REQUIRED = {
 }
 PROGRESS_KEYS = {
     "schema_version", "feature", "updated_at", "plan_status", "implementation_status", "tasks",
-    "open_questions", "handoff", "delivery",
+    "open_questions", "handoff", "delivery", "check_timing",
 }
 MOCKUP_STATUSES = ("proposed", "approved")
 BATCH_COMMANDS = ("set", "log")
@@ -398,6 +399,8 @@ def validate(plan: Plan) -> tuple[list[str], list[str]]:
         errors.append(f"progress.json: invalid plan_status {progress.get('plan_status')!r}")
     if progress.get("implementation_status") not in IMPLEMENTATION_STATUSES:
         errors.append(f"progress.json: invalid implementation_status {progress.get('implementation_status')!r}")
+    if "check_timing" in progress and progress["check_timing"] not in CHECK_TIMINGS:
+        errors.append(f"progress.json: invalid check_timing {progress['check_timing']!r}")
     delivery = progress.get("delivery")
     if delivery:
         if delivery.get("status") not in DELIVERY_STATUSES:
@@ -585,6 +588,8 @@ def cmd_status(plan: Plan, args) -> None:
     delivery = progress.get("delivery")
     if delivery:
         print(f"delivery: {delivery.get('status')}, phase {delivery.get('phase')}")
+    if progress.get("check_timing"):
+        print(f"check timing: {progress['check_timing']}")
     leaves = plan.leaves()
     counts = {s: 0 for s in TASK_STATUSES}
     for tid in leaves:

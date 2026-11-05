@@ -454,6 +454,18 @@ class ValidateProgressTest(PlanTestCase):
         self.assertIn("invalid delivery.status 'shipping'", result.stdout)
         self.assertIn("invalid delivery.phase 'qa'", result.stdout)
 
+    def test_check_timing(self):
+        self.make_plan()
+        for timing in ("milestones", "at_end", "never"):
+            self.edit_progress(lambda p: p.update(check_timing=timing))
+            result = self.run_plan("validate")
+            self.assertExit(result, 0)
+            self.assertNotIn("check_timing", result.stdout)
+        self.edit_progress(lambda p: p.update(check_timing="sometimes"))
+        result = self.run_plan("validate")
+        self.assertExit(result, 1)
+        self.assertIn("invalid check_timing 'sometimes'", result.stdout)
+
     def test_unknown_task_and_invalid_task_status(self):
         self.make_plan()
         self.edit_progress(lambda p: p["tasks"].update({
@@ -552,6 +564,12 @@ class StatusTest(PlanTestCase):
         self.assertIn("tasks: pending 2  (0% done)", out)
         self.assertIn("ready to start: T-001\n", out)
         self.assertNotIn("delivery", out)
+        self.assertNotIn("check timing", out)
+
+    def test_check_timing_is_shown_once_settled(self):
+        self.make_plan()
+        self.edit_progress(lambda p: p.update(check_timing="at_end"))
+        self.assertIn("check timing: at_end\n", self.ok("status"))
 
     def test_invalid_status_is_shown_not_a_crash(self):
         self.make_plan()

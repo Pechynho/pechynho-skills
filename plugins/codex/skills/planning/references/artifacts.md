@@ -154,6 +154,8 @@ that only accumulates goes into the log.
 - `implementation_status`: `not_started`, `in_progress`, `blocked` or `done`;
 - `tasks`: a map by task ID with `status`, `owner`, `blockers` and `updated_at`;
 - `open_questions`: IDs of open questions from `decisions.md`;
+- `check_timing`: `milestones`, `at_end` or `never` once the
+  [check timing](../shared/ground-rules.md#check-timing) is settled, absent until then;
 - `handoff`: the current context, work in progress and the next step;
 - in `feature-delivery` also `delivery` per the
   [continuity rules](../../feature-delivery/references/continuity.md).
@@ -177,7 +179,7 @@ copy log content back into `progress.json`.
 Task statuses: `pending`, `in_progress`, `blocked`, `done`, `cancelled`. When the plan is created, the
 tasks are `pending`, the owner `null` and the log empty. When editing an existing plan, keep the real
 status and the evidenced history. `done` needs evidence of the `done_when` conditions and the
-written tests, finished subtasks and done dependencies; the project checks run at the next milestone
+written tests, finished subtasks and done dependencies; the project checks run later
 per [programming](../../programming/SKILL.md#4-verify-at-the-right-moment), and a failing one sets the
 affected tasks back to `in_progress`. Cancelling a task requires a reason and a check
 of the impact on its consumers and on the coverage of criteria; cancelled work is not finished work.

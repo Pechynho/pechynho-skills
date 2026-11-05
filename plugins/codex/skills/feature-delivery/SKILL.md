@@ -78,8 +78,11 @@ Business questions that arise here do not stop the phase: implement all of the w
 not change, then ask the collected questions together and finish the dependent parts before moving on
 to the click-through. Leave a part unfinished only when the user postpones its decision.
 
-The main agent integrates the results and runs the checks per the ground rules, grouped at the
-end of a larger part and of the whole implementation; record skipped or failed checks explicitly.
+The main agent integrates the results and runs the checks per the ground rules and the
+[check timing](shared/ground-rules.md#check-timing) that programming settles with the user at the start
+of this phase; record skipped or failed checks explicitly. `milestones` and `at_end` cover this phase
+only: with `at_end` the checks and their fixes finish before the click-through, and later fixes are
+verified by their impact. `never` holds for the whole pass; the click-through and the review still run.
 After significant milestones update the progress and create a local commit per the continuity reference.
 At the end of the phase offer the user a fresh session per its
 [phase boundary rule](references/continuity.md#when-to-save-and-commit).
@@ -119,8 +122,8 @@ review and its fixes save a checkpoint and offer the user a fresh session per th
 
 ## 5. Handover of the first version
 
-Handing over a ready version requires met acceptance criteria, the relevant checks, browser coverage
-(or evidenced non-applicability), a finished review and resolved blocking findings. Do not present a
+Handing over a ready version requires met acceptance criteria, the relevant checks (with the `never`
+check timing, the list of checks left to the user), browser coverage (or evidenced non-applicability), a finished review and resolved blocking findings. Do not present a
 missing environment, decision or an unverified fix as a completed pass. On a blockage record the state
 and the next step, and present the achieved result as partial.
 

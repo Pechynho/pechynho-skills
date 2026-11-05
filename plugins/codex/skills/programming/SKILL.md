@@ -48,8 +48,9 @@ instead of reading whole task files.
 Respect the dependencies and the stable task IDs. The main agent updates the progress at milestones,
 blockages and handover (`set`, `log check`); do not duplicate the status into the tasklist. `done`
 requires the task's `done_when` conditions, its tests written and the change read and integrated by
-the main agent; it does not wait for the checks. They run at the next milestone and are recorded with
-`log check`; a failing check sets the affected tasks back to `in_progress`.
+the main agent; it does not wait for the checks. They run per the
+[check timing](shared/ground-rules.md#check-timing) and are recorded with `log check`; a failing check
+sets the affected tasks back to `in_progress`.
 A newly discovered business ambiguity goes to the user and the answer back into the plan.
 
 At the start, find the large visual steps of the work that the plan's mockup index does not already
@@ -59,6 +60,11 @@ and ask in one batch whether to make mockups before them per the
 [when to ask](shared/business-questions.md#when-to-ask): the answer decides how those steps are built.
 Build the look of such a step only after its mockup is approved; meanwhile implement what the look
 does not affect.
+
+Also at the start, settle the [check timing](shared/ground-rules.md#check-timing) of work with more
+than one milestone: recommend whether the checks run at milestones or once at the end, offer leaving
+them to the user, and let the user choose. Ask in the same batch as the mockup question. Do not repeat the question for a later batch of
+fixes when the recorded mode still fits.
 
 ## 2. Choose how to work
 
@@ -94,7 +100,7 @@ rules. Tests verify behavior, boundaries and regressions;
 they do not merely restate the implementation. A subagent may write the implementation and the tests,
 but it does not run the checks; it hands the requests to the main agent, finishes the independent part
 and ends with a handover. It does not wait for the result: the main agent collects the requests for the
-next milestone and hands a failure back to the same agent within minutes of its handover, otherwise to
+next check run and hands a failure back to the same agent within minutes of its handover, otherwise to
 a new short run per [one assignment per run](shared/delegation.md#one-assignment-per-run).
 
 After taking over the results, the main agent reads the changes and checks the assignment, the rules
@@ -105,13 +111,18 @@ on a risky part, but run a separate multi-stage code review only when requested 
 ## 4. Verify at the right moment
 
 Follow the [verification rules](shared/ground-rules.md#verification): only the main agent runs the
-checks at milestones, after a larger coherent part and before the handover, not after each task, with
-the scope chosen by the change and the mandatory project checks. Merge identical subagent requests; a
-failure goes with the failing cases and the diff back to the subagent within minutes of its handover,
+checks, at the moments the agreed [check timing](shared/ground-rules.md#check-timing) sets and not after
+each task, with the scope chosen by the change and the mandatory project checks. Merge identical
+subagent requests; a failure goes with the failing cases and the diff back to the subagent within minutes of its handover,
 otherwise to a new short run, per [one assignment per run](shared/delegation.md#one-assignment-per-run).
 On a concrete failure
 verify the affected fix in a targeted way first. Do not repeat a successful run without
 a new change, a failure or an unresolved risk.
+
+With `at_end` run the formatters and automatic fixers first, then the remaining checks. Group the
+failures by cause rather than by tool and start with the causes behind many failures. The authors' runs
+are over by then, so hand each group with its failing cases and the diff to a new short run, or fix it
+yourself when it is small. Verify each fix in a targeted way and finish with one full run.
 
 If a formatter changes the code, review its diff and add follow-up verification by impact. Fix your own
 errors. Describe and evidence an unrelated pre-existing failure instead of marking the whole suite as
@@ -120,7 +131,7 @@ passing. State a missing environment or a skipped check as a limitation.
 ## 5. Hand over the result
 
 Done means integrated changes within the permitted scope, matching tests and the relevant checks
-performed. Do not mistake an open dependency on a user answer for a finished implementation.
+performed; with the `never` check timing report them as not run instead. Do not mistake an open dependency on a user answer for a finished implementation.
 
 Summarize what changed, why, how it was verified and what remains open. Map fixes from a review to the
 original finding IDs. Report the actual check results and the remaining limitations. Commit, push,

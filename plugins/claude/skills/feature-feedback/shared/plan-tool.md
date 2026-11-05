@@ -15,7 +15,7 @@ python3 <skill directory>/shared/plan.py {plans_dir}/{feature} <command>
 |---|---|
 | `init` | Create `progress.json` and `log.jsonl` for a new tasklist. |
 | `validate` | Check JSON, unique IDs, parents, dependencies and their cycles, references, coverage of the PRD criteria, the mockup index, the progress and the log. Exit code 1 on an error. |
-| `status` | Derived overview: phase, counts, blocked and running tasks, open questions, unresolved findings, ready tasks. |
+| `status` | Derived overview: phase, check timing, counts, blocked and running tasks, open questions, unresolved findings, ready tasks. |
 | `next` | Tasks whose dependencies, including those of their parents, are done, and parents whose subtasks are finished and wait for integration. |
 | `show T-001 [T-002 …]` | Each task with its status, dependencies, subtasks, consumers and log records; enough for a brief of one run with several tasks. |
 | `set T-001 [T-002 …] in_progress --owner worker` | Change a status; also `blocked --blocker Q-002`, `done --evidence "…"`, `cancelled --reason "…"`. Refuses `done` with unfinished subtasks or dependencies. Several tasks take the same options and change in the given order, so `set T-001 T-002 done` works when T-002 depends on T-001. |
@@ -30,5 +30,5 @@ Record several items in one call per [several records in one call](tool-batches.
 
 The tool records, it does not judge: whether a task meets its `done_when`, whether a finding is
 resolved and which checks to run stay the agent's decisions. Fields it does not manage (`plan_status`,
-`implementation_status`, `open_questions`, `handoff`, `delivery`) are edited in `progress.json`
+`implementation_status`, `open_questions`, `check_timing`, `handoff`, `delivery`) are edited in `progress.json`
 directly, keeping valid JSON. Without Python follow the same format by hand and check the same rules.

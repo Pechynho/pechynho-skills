@@ -62,7 +62,8 @@ The document should contain the following; shorten or omit unimportant parts:
   in the work directory), relevant materials and the entry file of the project instructions
   (`AGENTS.md`, `CLAUDE.md`). Do not copy the project rules; the new agent loads them itself.
 - **Verification:** checks actually performed, commands, results, limitations and subsequent changes.
-  State clearly what was not run or finished.
+  State clearly what was not run or finished, and the agreed
+  [check timing](shared/ground-rules.md#check-timing) of work in progress.
 - **Obstacles and hypotheses:** open questions, evidenced bugs, failed attempts and their results, so
   that the next agent does not repeat the same work.
 - **Operational context:** needed services, available artifacts and operations in progress. Terminal

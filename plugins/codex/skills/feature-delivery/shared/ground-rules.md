@@ -40,25 +40,61 @@ stricter wins; a project rule that relaxes one of these rules applies only when 
   [playwright-testing](../../playwright-testing/SKILL.md) may drive a browser, run their scenario
   scripts through the browser tool and run one-off browser scripts. Automated test suites, linters,
   static analysis, formatters and builds remain exclusive to the main agent.
-- Run the project checks only at milestones: after a larger coherent part of the work (several tasks,
-  not a single handover), before a checkpoint commit, a click-through or a review, and before the
-  handover. Choose the relevant tools and scope by the change; do not run them after every small edit
-  or task.
-- Between milestones run only a targeted check, and only when debugging a concrete failure or when the
+- Run the project checks only at the moments the [check timing](#check-timing) sets. By default these
+  are milestones: after a larger coherent part of the work (several tasks, not a single handover),
+  before a checkpoint commit, a click-through or a review, and before the handover. Choose the relevant
+  tools and scope by the change; do not run them after every small edit or task.
+- Outside these runs run only a targeted check, and only when debugging a concrete failure or when the
   next step depends on its result (generated code, a migration). After a late small change run the
   targeted checks of what it affects; the full checks run once before the handover.
-- Milestones decide when checks run, never a subagent's cache: do not run checks early to catch a
-  subagent while it lives. A failure goes with the failing cases and the diff back to its author when
+- The check timing decides when checks run, never a subagent's cache: do not run checks early to catch
+  a subagent while it lives. A failure goes with the failing cases and the diff back to its author when
   that is still within minutes of its handover, otherwise to a new short run.
 - Run a check that takes minutes as a background command and process the handovers of other runs
   meanwhile; read only its summary and failures, per
   [working with tool output](#working-with-tool-output).
 - The main agent coordinates subagents' requests, merges identical checks and passes the results back.
   When debugging a specific failure, use a targeted run instead of repeating the whole suite.
-- Before finishing, satisfy the project's checks (see [project context](project-context.md#checks)).
+- Before finishing, satisfy the project's checks (see [project context](project-context.md#checks)),
+  unless the [check timing](#check-timing) is `never`.
   For a documentation-only change verify the documentation.
 - **Do not repeat a successful check without a subsequent change.** Report the run already performed,
   its result and any limitations.
+
+## Check timing
+
+Work with more than one milestone runs in one of three modes. Work verified by a single run of the
+checks has nothing to decide, unless the user asks for `never`.
+
+- `milestones`, the default: the checks run at milestones per [Verification](#verification), so an
+  error shows up close to its cause and does not spread into later work.
+- `at_end`: the whole implementation including its tests is written and integrated first; only then do
+  the project checks run and their failures get fixed. Reading and integrating each handover stays as
+  it is, and the targeted checks of [Verification](#verification) stay allowed. Checkpoint commits
+  before that run record that the checks are still pending. The main agent keeps the subagents' check
+  requests for that run, in the plan log when there is a plan.
+- `never`: the user takes over the checks, for example in CI, and the agent runs no linters,
+  formatters, static analysis or test suites in any phase. Tests are still written, and a build or
+  generation step that the next step depends on stays allowed. Nothing counts as verified by these
+  checks: the project's requirement stays open for the user, and the handover says so and lists the
+  checks to run, including the subagents' requests.
+
+Recommend `milestones` or `at_end` for the concrete work:
+
+- `at_end` when intermediate states cannot pass anyway (a refactoring, a rename or an API change across
+  layers), when the checks are slow compared with the work, or when the tasks are independent and
+  follow settled contracts and known patterns.
+- `milestones` when later work builds on earlier results (a new shared contract, data model or
+  pattern), for risky logic or code with little test coverage, when the work spans several sessions,
+  or when a commit hook runs the checks and checkpoint commits are expected.
+
+The user decides, although this is a technical choice. Ask with the question tool before the
+implementation starts, with the recommended mode first and the reason drawn from the work at hand.
+Offer `never` as the last option and do not recommend it; only the user's explicit choice sets it.
+Do not ask when the assignment, an earlier answer or the plan progress (`check_timing`) already settles
+it. Record the answer in the plan progress when there is a plan and pass it on in a handover. The user
+may change the mode at any time; when the work turns out differently than expected, recommend the
+change.
 
 ## Implementation and tests order
 
