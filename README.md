@@ -11,7 +11,7 @@ invoked with the `pechynho:` prefix: `/pechynho:planning` in Claude Code, `$pech
 | `playwright-testing` | Headless click-through and visual testing in the dev environment by testers with bounded scenario groups. |
 | `feature-delivery` | The whole pass from plan through implementation, click-through and review to the first version, with resumable progress. Explicit invocation only. |
 | `feature-feedback` | Record of user feedback with stable IDs and status, targeted plan updates and implementation. |
-| `handoff` | Handover of work in progress to another agent via a temporary document and a prompt to copy. |
+| `handoff` | Handover of work in progress to another agent via a document in the work directory and a prompt to copy. |
 
 Install the whole plugin; the skills link to each other and are not meant to be installed one by one.
 

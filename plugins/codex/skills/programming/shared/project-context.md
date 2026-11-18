@@ -48,7 +48,7 @@ echo "${TMPDIR:-/tmp}/agent-work/$(basename "$root")-$(printf %s "$root" | cksum
 
 The path is unique per checkout (worktrees of one repository get different directories). Use it for
 everything a skill produces only as working material: planning notes, review diffs, one-off and
-click-through scripts, logs, screenshots and other evidence. Create subdirectories per skill and
+click-through scripts, logs, screenshots, other evidence and handoff documents. Create subdirectories per skill and
 subject, for example `{work_dir}/planning/{feature}/notes.md` or `{work_dir}/review/{scope}/diff.patch`.
 
 Never put working material into versioned content. When a project sets `work_dir` inside the
@@ -92,8 +92,8 @@ replaces it.
 
 ### Handoff prefix
 
-`handoff_prefix`, default the basename of the repository root. Used in the name of the temporary
-handoff document.
+`handoff_prefix`, default the basename of the repository root. Used in the name of the handoff
+document.
 
 ## Tools
 

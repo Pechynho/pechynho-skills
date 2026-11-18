@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Prepares a handover of work in progress to another LLM tool as a temporary Markdown document outside the repository plus a prompt to copy manually. Use on a request for a handoff or to pass context to another agent; a plain status question does not start this workflow.
+description: Prepares a handover of work in progress to another LLM tool as a Markdown document in the project's work directory (temporary directory by default) plus a prompt to copy manually. Use on a request for a handoff or to pass context to another agent; a plain status question does not start this workflow.
 ---
 
 # Handoff
@@ -32,14 +32,17 @@ create a commit, stash or new branch. Do not launch another LLM tool and do not 
 automatically. If delegated work is still running, request its state and make sure it no longer writes
 into the same checkout after the snapshot is taken; record unfinished operations explicitly.
 
-## Temporary document
+## Handoff document
 
-Store a single Markdown file in the system temporary directory, never in the project. Create a unique
-file with `mktemp` (owner-only permissions), using the
+Store a single Markdown file in `{work_dir}/handoff/` per the
+[work directory](shared/project-context.md#work-directory): the project's `work_dir` when it is set and
+ignored by Git, otherwise the default in the system temporary directory. Never put it into versioned
+content. Create the directory and a unique file with `mktemp` (owner-only permissions), using the
 [handoff prefix](shared/project-context.md#handoff-prefix), for example:
 
 ```bash
-mktemp "${TMPDIR:-/tmp}/<handoff_prefix>-handoff-$(date +%Y%m%d-%H%M%S)-XXXXXX.md"
+mkdir -p "<work_dir>/handoff"
+mktemp "<work_dir>/handoff/<handoff_prefix>-handoff-$(date +%Y%m%d-%H%M%S)-XXXXXX.md"
 ```
 
 Use the path actually returned. Do not overwrite an existing handover and do not delete the file when
@@ -80,7 +83,7 @@ diffs; fit the length to the complexity of the work in progress.
 
 Read the resulting document and verify that it matches the current state, the links lead to available
 files and the first step is doable without the original chat. Check that it contains no secrets and that
-no handover file was created in the project.
+no handover file was created in versioned content.
 
 Finally provide the link to the created file and a prompt to copy manually with the absolute paths
 filled in, for example:
@@ -91,5 +94,5 @@ filled in, for example:
 > recorded decisions and the user's permission scope and continue with the first unfinished step. If a
 > step requires consent not yet given, ask for it first.
 
-Briefly remind that the temporary directory may be cleared on restart. End with the handover and do not continue the
+When the document is in the default temporary location, briefly remind that it may be cleared on restart. End with the handover and do not continue the
 original implementation.
